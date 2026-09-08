@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/engine", "crates/protocol", "crates/server", "crates/policies", "clients/rust"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+
+[workspace.dependencies]
+settlers-engine = { path = "crates/engine" }
+settlers-protocol = { path = "crates/protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+schemars = "1"
+tokio = { version = "1", features = ["full", "test-util"] }
+axum = { version = "0.8", features = ["ws"] }
+async-trait = "0.1"
+uuid = { version = "1", features = ["v4", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures-util = "0.3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+redundant_clone = "warn"
+large_enum_variant = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

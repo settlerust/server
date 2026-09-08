@@ -1,0 +1,49 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[features]
+default = []
+aws = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:aws-sdk-firehose", "dep:aws-sdk-s3", "dep:flate2", "dep:reqwest"]
+
+[dependencies]
+settlers-engine.workspace = true
+settlers-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+axum.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+futures-util.workspace = true
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+getrandom = "0.3"
+rusqlite = { version = "0.38", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+tower-http = { version = "0.6", features = ["cors"] }
+aws-config = { version = "1", optional = true }
+aws-sdk-dynamodb = { version = "1", optional = true }
+aws-sdk-firehose = { version = "1", optional = true }
+aws-sdk-s3 = { version = "1", optional = true }
+flate2 = { version = "1", optional = true }
+reqwest = { workspace = true, optional = true }
+
+[dev-dependencies]
+settlers-client = { path = "../../clients/rust" }
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+reqwest.workspace = true
+tokio-tungstenite = "0.29"
+settlers-policies = { path = "../policies" }
+
+[lints]
+workspace = true

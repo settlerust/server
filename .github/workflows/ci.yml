@@ -1,0 +1,52 @@
+name: server
+on: [push, pull_request]
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-features --locked
+      - run: docker compose -f infra/compose.yaml up -d
+      - run: SETTLERS_TEST_DYNAMODB_URL=http://127.0.0.1:18000 cargo test -p server --features aws --test aws --locked -- --ignored
+      - run: cargo run -q -p settlers-protocol --bin schema > docs/protocol.schema.json && python3 scripts/generate_clients.py && git diff --exit-code -- docs/protocol.schema.json clients/typescript/src/types.ts clients/python/settlers_client/types.py
+  clients:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci && npm run check && npm test
+        working-directory: clients/typescript
+      - run: pip install -e clients/python mypy && mypy --strict clients/python/settlers_client && PYTHONPATH=clients/python python -m unittest discover -s clients/python/tests
+  processes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e clients/python jsonschema
+      - run: cargo build --workspace --release --locked
+      - run: python scripts/process_smoke.py
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check && terraform init -backend=false && terraform validate
+        working-directory: infra

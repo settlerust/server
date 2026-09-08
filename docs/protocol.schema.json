@@ -1,0 +1,3084 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Protocol",
+  "type": "object",
+  "properties": {
+    "client_frame": {
+      "$ref": "#/$defs/ClientFrame"
+    },
+    "command_request": {
+      "$ref": "#/$defs/CommandRequest"
+    },
+    "create_game": {
+      "$ref": "#/$defs/CreateGame"
+    },
+    "event_page": {
+      "$ref": "#/$defs/EventPage"
+    },
+    "game_list": {
+      "$ref": "#/$defs/GameList"
+    },
+    "game_view": {
+      "$ref": "#/$defs/GameView"
+    },
+    "guest_request": {
+      "$ref": "#/$defs/GuestRequest"
+    },
+    "health": {
+      "$ref": "#/$defs/Health"
+    },
+    "players_view": {
+      "$ref": "#/$defs/PlayersView"
+    },
+    "server_frame": {
+      "$ref": "#/$defs/ServerFrame"
+    },
+    "token_response": {
+      "$ref": "#/$defs/TokenResponse"
+    },
+    "topology": {
+      "$ref": "#/$defs/Topology"
+    }
+  },
+  "required": [
+    "health",
+    "client_frame",
+    "server_frame",
+    "create_game",
+    "guest_request",
+    "token_response",
+    "command_request",
+    "game_view",
+    "event_page",
+    "game_list",
+    "players_view",
+    "topology"
+  ],
+  "$defs": {
+    "Action": {
+      "oneOf": [
+        {
+          "description": "Correct the current setup settlement before confirming its connecting road.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "relocate_settlement"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "vertex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "build_settlement"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "vertex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "edge": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "build_road"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "edge"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "build_city"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "vertex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "roll"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resources": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "discard"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "resources"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "move_robber"
+            },
+            "victim": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "hex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "buy_development"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "play_knight"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "play_road_building"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Decline the optional second road after placing the first free road.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "finish_road_building"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resource": {
+              "$ref": "#/$defs/Resource"
+            },
+            "type": {
+              "type": "string",
+              "const": "play_monopoly"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "resource"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resources": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "play_year_of_plenty"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "resources"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "give": {
+              "$ref": "#/$defs/Resources"
+            },
+            "receive": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "bank_trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "give",
+            "receive"
+          ]
+        },
+        {
+          "description": "Only the server may use this after resolving an authenticated offer acceptance.",
+          "type": "object",
+          "properties": {
+            "give": {
+              "$ref": "#/$defs/Resources"
+            },
+            "other": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "receive": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "other",
+            "give",
+            "receive"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "end_turn"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "ApiError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "current_version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string"
+        },
+        "rule": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RuleError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "winner": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "request": {
+              "$ref": "#/$defs/CommandRequest"
+            },
+            "type": {
+              "type": "string",
+              "const": "command"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "request"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "nonce": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "ping"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "nonce"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "resync"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "Command": {
+      "oneOf": [
+        {
+          "description": "Explicitly enroll an agent; required for player seats in research tables.",
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "join_agent"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "spectator": {
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "type": "string",
+              "const": "join"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "start"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Roll publicly for the first seat, then wait for the host to start setup.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "roll_for_order"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "settings": {
+              "$ref": "#/$defs/Settings"
+            },
+            "type": {
+              "type": "string",
+              "const": "configure"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "settings"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "$ref": "#/$defs/Action"
+            },
+            "type": {
+              "type": "string",
+              "const": "act"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "action"
+          ]
+        },
+        {
+          "description": "Replace the private, editable selection for this discard round.",
+          "type": "object",
+          "properties": {
+            "discard_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "resources": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "select_discard"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "discard_id",
+            "resources"
+          ]
+        },
+        {
+          "description": "Lock the current selection; further selections may fill the remaining quota.",
+          "type": "object",
+          "properties": {
+            "discard_id": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "confirm_discard"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "discard_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "give": {
+              "$ref": "#/$defs/Resources"
+            },
+            "message": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Communication"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "receive": {
+              "$ref": "#/$defs/Resources"
+            },
+            "to": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "offer_trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "to",
+            "give",
+            "receive"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "accept_trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "offer_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "reject_trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "offer_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "cancel_trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "offer_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "message": {
+              "$ref": "#/$defs/Communication"
+            },
+            "to": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "communicate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "message"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "filter": {
+              "$ref": "#/$defs/Filter"
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "set_filter"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "player",
+            "filter"
+          ]
+        }
+      ]
+    },
+    "CommandRequest": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/Command"
+        },
+        "expected_version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "expected_version",
+        "command"
+      ]
+    },
+    "Communication": {
+      "description": "A policy can inspect intent/resources without parsing the optional natural-language text.",
+      "type": "object",
+      "properties": {
+        "intent": {
+          "$ref": "#/$defs/Intent"
+        },
+        "resources": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Resources"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "intent"
+      ]
+    },
+    "CreateGame": {
+      "type": "object",
+      "properties": {
+        "host_as_player": {
+          "type": "boolean",
+          "default": true
+        },
+        "name": {
+          "type": "string"
+        },
+        "player_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "research": {
+          "description": "Agent-only table whose spectators can inspect every player's hand.",
+          "type": "boolean"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "default": {
+            "discard_limit": 7,
+            "players": 4,
+            "points_to_win": 10,
+            "turn_seconds": 120
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Development": {
+      "type": "string",
+      "enum": [
+        "knight",
+        "road_building",
+        "year_of_plenty",
+        "monopoly",
+        "victory_point"
+      ]
+    },
+    "DiscardView": {
+      "description": "Private choices for the receiving seat. Other seats and spectators never receive them.",
+      "type": "object",
+      "properties": {
+        "deadline_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "draft": {
+          "$ref": "#/$defs/Resources"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "locked": {
+          "$ref": "#/$defs/Resources"
+        },
+        "required": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "required",
+        "locked",
+        "draft",
+        "deadline_ms"
+      ]
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "unauthorized",
+        "forbidden",
+        "not_found",
+        "invalid_request",
+        "conflict",
+        "rule_violation",
+        "trade_taken",
+        "trade_unavailable",
+        "storage_unavailable",
+        "backpressure",
+        "internal"
+      ]
+    },
+    "Event": {
+      "description": "Public rule effects. Hidden draws, discarded types, and stolen types are omitted.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "received": {
+              "$ref": "#/$defs/Resources"
+            },
+            "returned": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "setup_settlement_moved"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "from",
+            "vertex",
+            "returned",
+            "received"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "built_settlement"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "vertex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "edge": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "built_road"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "edge"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "built_city"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "vertex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "first": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "second": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "rolled"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "first",
+            "second"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "resources": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "produced"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "resources"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "discarded"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "count"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "robber_moved"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "hex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "stole"
+            },
+            "victim": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "victim",
+            "count"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "bought_development"
+            }
+          },
+          "required": [
+            "type",
+            "player"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "card": {
+              "$ref": "#/$defs/Development"
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "played_development"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "card"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "resources": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "took_resources"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "resources"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "resource": {
+              "$ref": "#/$defs/Resource"
+            },
+            "type": {
+              "type": "string",
+              "const": "monopoly_collected"
+            },
+            "victim": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "victim",
+            "resource",
+            "count"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "give": {
+              "$ref": "#/$defs/Resources"
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "receive": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "bank_traded"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "give",
+            "receive"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "give": {
+              "$ref": "#/$defs/Resources"
+            },
+            "other": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "receive": {
+              "$ref": "#/$defs/Resources"
+            },
+            "type": {
+              "type": "string",
+              "const": "traded"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "other",
+            "give",
+            "receive"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "largest_army": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "longest_road": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "awards_changed"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "turn": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "turn_changed"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "turn"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "phase": {
+              "$ref": "#/$defs/Phase"
+            },
+            "type": {
+              "type": "string",
+              "const": "phase_changed"
+            }
+          },
+          "required": [
+            "type",
+            "phase"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "points": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "won"
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "points"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "timed_out"
+            }
+          },
+          "required": [
+            "type",
+            "player"
+          ]
+        }
+      ]
+    },
+    "EventBatch": {
+      "type": "object",
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PublicEvent"
+          }
+        },
+        "sequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "timestamp_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp_ms",
+        "events"
+      ]
+    },
+    "EventPage": {
+      "type": "object",
+      "properties": {
+        "archive_pending": {
+          "type": "boolean"
+        },
+        "current_version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventBatch"
+          }
+        },
+        "game_id": {
+          "type": "string"
+        },
+        "next_after": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "game_id",
+        "events",
+        "next_after",
+        "current_version",
+        "archive_pending"
+      ]
+    },
+    "Filter": {
+      "type": "object",
+      "properties": {
+        "auto_reject_trades": {
+          "type": "boolean"
+        },
+        "mute_chat": {
+          "type": "boolean"
+        },
+        "mute_trade_messages": {
+          "type": "boolean"
+        },
+        "shadow_mute": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mute_chat",
+        "mute_trade_messages",
+        "auto_reject_trades",
+        "shadow_mute"
+      ]
+    },
+    "GameList": {
+      "type": "object",
+      "properties": {
+        "games": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GameSummary"
+          }
+        },
+        "next_after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "games"
+      ]
+    },
+    "GameSummary": {
+      "type": "object",
+      "properties": {
+        "capacity": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "connected_players": {
+          "type": "integer",
+          "format": "uint8",
+          "default": 0,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "finished": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "players": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "research": {
+          "type": "boolean",
+          "default": false
+        },
+        "started": {
+          "type": "boolean"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "version",
+        "players",
+        "capacity",
+        "started",
+        "finished"
+      ]
+    },
+    "GameView": {
+      "type": "object",
+      "properties": {
+        "deadline_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "discard": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DiscardView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "filters": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Filter"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "game": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Observation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "host": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberView"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "offers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TradeOffer"
+          }
+        },
+        "opening": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Opening"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "research": {
+          "type": "boolean",
+          "default": false
+        },
+        "research_hands": {
+          "description": "Only research spectators receive hands; seated agents still have normal redaction.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ResearchHand"
+          }
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "version",
+        "settings",
+        "host",
+        "members",
+        "offers"
+      ]
+    },
+    "GuestRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Health": {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/HealthStatus"
+        }
+      },
+      "required": [
+        "status",
+        "protocol"
+      ]
+    },
+    "HealthStatus": {
+      "type": "string",
+      "enum": [
+        "ok"
+      ]
+    },
+    "Intent": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "build_road",
+        "build_settlement",
+        "build_city",
+        "buy_development",
+        "request_trade",
+        "strategy"
+      ]
+    },
+    "MemberView": {
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "is_you": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "seat": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "connected",
+        "is_you"
+      ]
+    },
+    "Observation": {
+      "type": "object",
+      "properties": {
+        "bank_available": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          },
+          "maxItems": 5,
+          "minItems": 5
+        },
+        "buildings": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        },
+        "current": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "deck_count": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "hexes": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          },
+          "maxItems": 19,
+          "minItems": 19
+        },
+        "largest_army": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "legal_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Action"
+          }
+        },
+        "longest_road": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "own": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Player"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/Phase"
+        },
+        "played_development": {
+          "type": "boolean"
+        },
+        "players": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PublicPlayer"
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          },
+          "maxItems": 9,
+          "minItems": 9
+        },
+        "roads": {
+          "type": "array",
+          "items": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        },
+        "robber": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "seat": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "turn": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "settings",
+        "buildings",
+        "roads",
+        "hexes",
+        "ports",
+        "robber",
+        "bank_available",
+        "deck_count",
+        "players",
+        "phase",
+        "current",
+        "turn",
+        "played_development",
+        "legal_actions"
+      ]
+    },
+    "OfferStatus": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "open"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "accepted"
+            }
+          },
+          "required": [
+            "type",
+            "player"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "expired"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "Opening": {
+      "description": "Public opening rolls. Only tied leaders roll again; play proceeds clockwise.",
+      "type": "object",
+      "properties": {
+        "first": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "order": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        },
+        "rolls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpeningRoll"
+          }
+        }
+      },
+      "required": [
+        "rolls",
+        "first",
+        "order"
+      ]
+    },
+    "OpeningRoll": {
+      "type": "object",
+      "properties": {
+        "first": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "player": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "round": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "second": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "player",
+        "first",
+        "second",
+        "round"
+      ]
+    },
+    "Phase": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "step": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "setup_settlement"
+            }
+          },
+          "required": [
+            "type",
+            "step"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "step": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "setup_road"
+            },
+            "vertex": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "step",
+            "vertex"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "roll"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "discard"
+            }
+          },
+          "required": [
+            "type",
+            "pending"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resume": {
+              "$ref": "#/$defs/Resume"
+            },
+            "type": {
+              "type": "string",
+              "const": "robber"
+            }
+          },
+          "required": [
+            "type",
+            "resume"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "main"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "remaining": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "resume": {
+              "$ref": "#/$defs/Resume"
+            },
+            "type": {
+              "type": "string",
+              "const": "free_roads"
+            }
+          },
+          "required": [
+            "type",
+            "remaining",
+            "resume"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "finished"
+            },
+            "winner": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "winner"
+          ]
+        }
+      ]
+    },
+    "Player": {
+      "type": "object",
+      "properties": {
+        "cities": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "development": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          },
+          "maxItems": 5,
+          "minItems": 5
+        },
+        "new_development": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          },
+          "maxItems": 5,
+          "minItems": 5
+        },
+        "played_knights": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "resources": {
+          "$ref": "#/$defs/Resources"
+        },
+        "roads": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "settlements": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "resources",
+        "development",
+        "new_development",
+        "played_knights",
+        "settlements",
+        "cities",
+        "roads"
+      ]
+    },
+    "PlayersView": {
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MemberView"
+          }
+        },
+        "own": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Player"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "players": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PublicPlayer"
+          }
+        }
+      },
+      "required": [
+        "members",
+        "players"
+      ]
+    },
+    "PublicEvent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "lobby_created"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "settings": {
+              "$ref": "#/$defs/Settings"
+            },
+            "type": {
+              "type": "string",
+              "const": "settings_changed"
+            }
+          },
+          "required": [
+            "type",
+            "settings"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "seat": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "joined"
+            }
+          },
+          "required": [
+            "type",
+            "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "started"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "opening": {
+              "$ref": "#/$defs/Opening"
+            },
+            "type": {
+              "type": "string",
+              "const": "order_decided"
+            }
+          },
+          "required": [
+            "type",
+            "opening"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "connected": {
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "seat": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "presence"
+            }
+          },
+          "required": [
+            "type",
+            "name",
+            "connected"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/Event"
+            },
+            "type": {
+              "type": "string",
+              "const": "rule"
+            }
+          },
+          "required": [
+            "type",
+            "event"
+          ]
+        },
+        {
+          "description": "Only the thief and victim receive the resource identity.",
+          "type": "object",
+          "properties": {
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "resource": {
+              "$ref": "#/$defs/Resource"
+            },
+            "type": {
+              "type": "string",
+              "const": "theft_details"
+            },
+            "victim": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "player",
+            "victim",
+            "resource"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer": {
+              "$ref": "#/$defs/TradeOffer"
+            },
+            "type": {
+              "type": "string",
+              "const": "trade_offered"
+            }
+          },
+          "required": [
+            "type",
+            "offer"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/TradeCloseReason"
+            },
+            "type": {
+              "type": "string",
+              "const": "trade_closed"
+            },
+            "winner": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "type",
+            "offer_id",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "trade_rejected"
+            }
+          },
+          "required": [
+            "type",
+            "offer_id",
+            "player"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "message": {
+              "$ref": "#/$defs/Communication"
+            },
+            "to": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "message"
+            }
+          },
+          "required": [
+            "type",
+            "from",
+            "message"
+          ]
+        }
+      ]
+    },
+    "PublicPlayer": {
+      "type": "object",
+      "properties": {
+        "cities": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "development_count": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "played_knights": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "points": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "resource_count": {
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "road_length": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "roads": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "seat": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "settlements": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "seat",
+        "resource_count",
+        "development_count",
+        "played_knights",
+        "settlements",
+        "cities",
+        "roads",
+        "points",
+        "road_length"
+      ]
+    },
+    "Receipt": {
+      "type": "object",
+      "properties": {
+        "duplicate": {
+          "type": "boolean"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "request_id",
+        "version",
+        "duplicate"
+      ]
+    },
+    "ResearchHand": {
+      "type": "object",
+      "properties": {
+        "hand": {
+          "$ref": "#/$defs/Player"
+        },
+        "seat": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "seat",
+        "hand"
+      ]
+    },
+    "Resource": {
+      "type": "string",
+      "enum": [
+        "brick",
+        "lumber",
+        "wool",
+        "grain",
+        "ore"
+      ]
+    },
+    "Resources": {
+      "description": "Resource counts in brick, lumber, wool, grain, ore order.",
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint8",
+        "maximum": 255,
+        "minimum": 0
+      },
+      "maxItems": 5,
+      "minItems": 5
+    },
+    "Resume": {
+      "type": "string",
+      "enum": [
+        "roll",
+        "main"
+      ]
+    },
+    "RuleError": {
+      "type": "string",
+      "enum": [
+        "invalid_settings",
+        "invalid_player",
+        "not_your_turn",
+        "wrong_phase",
+        "invalid_location",
+        "illegal_placement",
+        "insufficient_resources",
+        "bank_shortage",
+        "no_pieces",
+        "empty_deck",
+        "cannot_play_development",
+        "invalid_discard",
+        "invalid_victim",
+        "invalid_trade",
+        "invalid_chance",
+        "game_finished"
+      ]
+    },
+    "ServerFrame": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "game": {
+              "$ref": "#/$defs/GameView"
+            },
+            "protocol": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "snapshot"
+            }
+          },
+          "required": [
+            "type",
+            "protocol",
+            "game"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "batch": {
+              "$ref": "#/$defs/EventBatch"
+            },
+            "type": {
+              "type": "string",
+              "const": "events"
+            }
+          },
+          "required": [
+            "type",
+            "batch"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "receipt": {
+              "$ref": "#/$defs/Receipt"
+            },
+            "type": {
+              "type": "string",
+              "const": "ack"
+            }
+          },
+          "required": [
+            "type",
+            "receipt"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "$ref": "#/$defs/ApiError"
+            },
+            "request_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string",
+              "const": "error"
+            }
+          },
+          "required": [
+            "type",
+            "error"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "nonce": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "pong"
+            }
+          },
+          "required": [
+            "type",
+            "nonce"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "resync_required"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "Settings": {
+      "type": "object",
+      "properties": {
+        "discard_limit": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "players": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "points_to_win": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "turn_seconds": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "players",
+        "points_to_win",
+        "discard_limit",
+        "turn_seconds"
+      ]
+    },
+    "TokenResponse": {
+      "type": "object",
+      "properties": {
+        "expires_at": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "subject": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token",
+        "subject",
+        "expires_at"
+      ]
+    },
+    "Topology": {
+      "description": "Stable geometry shared by every state. Coordinates use an integer pointy-hex lattice.",
+      "type": "object",
+      "properties": {
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "hex_centers": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int8",
+              "maximum": 127,
+              "minimum": -128
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "maxItems": 19,
+          "minItems": 19
+        },
+        "hex_vertices": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "maxItems": 6,
+            "minItems": 6
+          },
+          "maxItems": 19,
+          "minItems": 19
+        },
+        "incident_edges": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          }
+        },
+        "incident_hexes": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          }
+        },
+        "neighbors": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            }
+          }
+        },
+        "ports": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "maxItems": 2,
+            "minItems": 2
+          },
+          "maxItems": 9,
+          "minItems": 9
+        },
+        "spiral": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          },
+          "maxItems": 19,
+          "minItems": 19
+        },
+        "vertices": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int8",
+              "maximum": 127,
+              "minimum": -128
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        }
+      },
+      "required": [
+        "vertices",
+        "edges",
+        "hex_vertices",
+        "hex_centers",
+        "incident_edges",
+        "incident_hexes",
+        "neighbors",
+        "ports",
+        "spiral"
+      ]
+    },
+    "TradeCloseReason": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "cancelled",
+        "turn_ended",
+        "replaced",
+        "resources_changed"
+      ]
+    },
+    "TradeOffer": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "give": {
+          "$ref": "#/$defs/Resources"
+        },
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Communication"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receive": {
+          "$ref": "#/$defs/Resources"
+        },
+        "status": {
+          "$ref": "#/$defs/OfferStatus"
+        },
+        "to": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "give",
+        "receive",
+        "status"
+      ]
+    }
+  }
+}

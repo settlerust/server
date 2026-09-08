@@ -1,0 +1,15 @@
+**
+!Cargo.toml
+!Cargo.lock
+!crates
+!crates/**
+!clients
+!clients/rust
+!clients/rust/**
+!docs
+!docs/protocol.schema.json
+!Dockerfile
+
+
+# sst
+.sst

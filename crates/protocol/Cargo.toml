@@ -1,0 +1,13 @@
+[package]
+name = "settlers-protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+settlers-engine.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[lints]
+workspace = true

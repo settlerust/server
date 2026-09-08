@@ -1,0 +1,15 @@
+[package]
+name = "settlers-policies"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+settlers-engine.workspace = true
+settlers-protocol.workspace = true
+serde_json.workspace = true
+
+settlers-client = { path = "../../clients/rust" }
+tokio.workspace = true
+
+[lints]
+workspace = true
