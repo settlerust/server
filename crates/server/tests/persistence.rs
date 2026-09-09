@@ -205,6 +205,7 @@ async fn host_can_configure_lobby_but_started_rules_are_fixed() {
                 points_to_win: 5,
                 discard_limit: 8,
                 turn_seconds: 30,
+                deterministic: false,
             },
         },
     )

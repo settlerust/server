@@ -155,6 +155,7 @@ async fn assigned_creation_recovers_concurrent_retries_without_duplicate_games()
         settings: Settings::default(),
         host_as_player: true,
         player_name: None,
+        seed: None,
     };
     let (a, b) = tokio::join!(
         h.service

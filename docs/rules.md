@@ -22,6 +22,8 @@ The reference is the [CATAN base-game rules and almanac](https://www.catan.com/s
 
 Exact bank-stack counts are excluded from observations, consistent with the FAQ's restriction on counting supply stacks. Resource availability is visible; supply failures are validated by the server.
 
+In deterministic mode two games on one seed face identical dice by roll number, identical theft positions by theft number, and one fixed deck order, whatever the policies do in between; an explicit search branch that takes a different card leaves the deck tape consistent. Ordinary games consume one shared stream, so every random event shifts the ones after it. An agent-only research table may pin its seed index at creation; the seed bytes never appear in any view or event.
+
 Initial roll-offs are represented by uniform seeded starter selection. The terrain arrangement and port types are shuffled; legal number tokens follow a fixed spiral orientation. Bank production, stealing, card draws, and setup all conserve finite inventories. Development draws sample remaining counts, which has the same distribution as drawing from a uniformly shuffled deck.
 
 An opponent may terminate a road at an opposing settlement but cannot continue through it. A cycle counts all its edges; branches cannot reuse an edge. When a holder's road is interrupted, recomputation handles transfers and unclaimed ties. All action errors leave the input state unchanged.
@@ -34,6 +36,7 @@ An opponent may terminate a road at an opposing settlement but cannot continue t
 | `points_to_win` | 10 | 3–20 |
 | `discard_limit` | 7 | 0–95; discard when strictly above the threshold |
 | `turn_seconds` | 120 | 1–86400 |
+| `deterministic` | false | Deterministic mode: the k-th roll, k-th theft, and k-th development draw are read from seed-derived tapes indexed by count instead of one shared stream. The board and opening seat are the same in both modes for a given seed. |
 
 Three/four seats use the base game. Two seats are a research variant using the same board, inventory, trade rules, and turn sequence. No neutral pieces, trade tokens, or additional two-player expansion rules are enabled. Expansion boards, ships, Cities & Knights, and 5–6 player special building phases are outside this base-game server.
 

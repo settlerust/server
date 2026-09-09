@@ -43,6 +43,8 @@ pub struct Limits {
     pub scenarios: usize,
     pub inner_scenarios: usize,
     pub node_budget: u64,
+    /// Opponents choose the action that maximizes their own static leaf instead of the builder's.
+    pub leaf_opponents: bool,
 }
 pub struct Search<'a> {
     pub seat: u8,
@@ -297,7 +299,7 @@ impl<'a> Search<'a> {
             if hex == s.robber {
                 continue;
             }
-            let pips = f64::from(6 - s.layout.number(hex).abs_diff(7)).max(0.0);
+            let pips = f64::from(6u8.saturating_sub(s.layout.number(hex).abs_diff(7)));
             let mut blocked = 0.0;
             let mut own = false;
             for &v in &topology().hex_vertices[hex as usize] {
@@ -758,6 +760,36 @@ impl<'a> Search<'a> {
         self.stats.afterstates += 1;
     }
 
+    /// An opponent's move under the leaf-guided model: the candidate whose immediate
+    /// static value from that seat's perspective is highest, with `EndTurn` after long turns.
+    fn leaf_action(&mut self, s: &State, p: u8, steps: u32) -> Action {
+        if steps >= 12 && s.phase == Phase::Main {
+            return Action::EndTurn;
+        }
+        let candidates = match s.phase {
+            Phase::Main | Phase::Roll | Phase::Robber { .. } | Phase::FreeRoads { .. } => {
+                self.candidates(s, p, steps)
+            }
+            _ => vec![opponent::act(s, p, steps)],
+        };
+        let mut best: Option<(f64, Action)> = None;
+        for a in candidates {
+            let value = match a {
+                Action::Roll => f64::INFINITY,
+                Action::EndTurn => evaluate(s, p, &self.w).total(),
+                _ => match apply(s, p, a) {
+                    Ok(next) => evaluate(&next, p, &self.w).total(),
+                    Err(_) => continue,
+                },
+            };
+            self.stats.leaves += 1;
+            if best.as_ref().is_none_or(|b| value > b.0) {
+                best = Some((value, a));
+            }
+        }
+        best.map_or_else(|| opponent::act(s, p, steps), |b| b.1)
+    }
+
     // ----- opponents' round under common random scenarios ------------------------------------
 
     /// Simulate from an afterstate through every other seat's turn to the root player's next
@@ -790,7 +822,11 @@ impl<'a> Search<'a> {
                         turn_steps = 0;
                     }
                     let p = actor(&s);
-                    let a = opponent::act(&s, p, turn_steps);
+                    let a = if self.limits.leaf_opponents && p != self.seat {
+                        self.leaf_action(&s, p, turn_steps)
+                    } else {
+                        opponent::act(&s, p, turn_steps)
+                    };
                     let next = match a {
                         Action::Roll => {
                             let total = scenario.roll();

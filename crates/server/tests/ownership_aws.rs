@@ -95,6 +95,7 @@ async fn ownership_manifest_restores_only_assigned_games_and_fences_old_actors()
                 settings: Settings::default(),
                 host_as_player: true,
                 player_name: None,
+                seed: None,
                 research: false,
             },
             1,

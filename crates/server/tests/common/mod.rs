@@ -51,6 +51,7 @@ impl Harness {
                     },
                     host_as_player: true,
                     player_name: None,
+                    seed: None,
                 },
                 0,
             )

@@ -855,6 +855,15 @@
           "description": "Agent-only table whose spectators can inspect every player's hand.",
           "type": "boolean"
         },
+        "seed": {
+          "description": "Seed index for an agent-only research table in deterministic mode. It fixes the board,\nthe dice tape, the theft tape, and the deck order; it is never disclosed to participants\nand is rejected for ordinary tables.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "settings": {
           "$ref": "#/$defs/Settings",
           "default": {
@@ -2926,6 +2935,10 @@
     "Settings": {
       "type": "object",
       "properties": {
+        "deterministic": {
+          "description": "Deterministic mode: the k-th roll, k-th theft, and k-th development draw come from\nseed-derived tapes indexed by count, so different policies on one seed face the same\nluck. Off by default; ordinary games consume one shared random stream.",
+          "type": "boolean"
+        },
         "discard_limit": {
           "type": "integer",
           "format": "uint8",

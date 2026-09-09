@@ -15,6 +15,7 @@ pub(crate) fn buy(
     let drawn = match chance {
         Some(Chance::Development { card }) if s.deck[card as usize] > 0 => card,
         Some(_) => return Err(RuleError::InvalidChance),
+        None if s.settings.deterministic => tape_draw(s),
         None => {
             let mut n = s.random.below(s.deck_count() as u32);
             let mut result = Development::Knight;
@@ -32,6 +33,31 @@ pub(crate) fn buy(
     s.players[p as usize].new_development[drawn as usize] += 1;
     emit(Event::BoughtDevelopment { player: p });
     Ok(())
+}
+/// The fixed order of the 25 development cards in a deterministic game.
+pub fn deck_order(seed: [u8; 32]) -> [Development; 25] {
+    let mut order = [Development::Knight; 25];
+    let mut i = 0;
+    for (card, count) in Development::ALL.iter().zip([14, 2, 2, 2, 5]) {
+        for _ in 0..count {
+            order[i] = *card;
+            i += 1;
+        }
+    }
+    Random::tape_shuffle(seed, Random::TAPE_DECK, &mut order);
+    order
+}
+/// The next card of the fixed order that the deck still holds. Explicit search branches can
+/// take other cards, so the tape skips cards that are no longer available.
+fn tape_draw(s: &State) -> Development {
+    let order = deck_order(s.random.seed);
+    let drawn = 25 - s.deck_count() as usize;
+    order[drawn..]
+        .iter()
+        .chain(order[..drawn].iter())
+        .copied()
+        .find(|&card| s.deck[card as usize] > 0)
+        .unwrap_or(Development::Knight)
 }
 fn play(
     s: &mut State,

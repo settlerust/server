@@ -36,6 +36,7 @@ async fn rest_requires_jwt_and_returns_typed_errors_and_player_views() {
             settings: Settings::default(),
             host_as_player: true,
             player_name: None,
+            seed: None,
         })
         .await
         .unwrap();

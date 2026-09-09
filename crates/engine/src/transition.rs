@@ -104,6 +104,7 @@ fn roll(
             (first, second)
         }
         Some(_) => return Err(RuleError::InvalidChance),
+        None if s.settings.deterministic => s.random.tape_roll(),
         None => (s.random.below(6) as u8 + 1, s.random.below(6) as u8 + 1),
     };
     emit(Event::Rolled {
@@ -211,7 +212,11 @@ fn robber(
             Some(Chance::Steal { resource }) if hand.0[resource as usize] > 0 => resource,
             Some(_) => return Err(RuleError::InvalidChance),
             None => {
-                let mut n = s.random.below(hand.total() as u32);
+                let mut n = if s.settings.deterministic {
+                    s.random.tape_steal(hand.total() as u32)
+                } else {
+                    s.random.below(hand.total() as u32)
+                };
                 let mut chosen = Resource::Brick;
                 for r in Resource::ALL {
                     if n < hand.0[r as usize] as u32 {

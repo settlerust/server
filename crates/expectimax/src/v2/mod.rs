@@ -36,6 +36,14 @@ pub struct SearchConfig {
     pub iterative: bool,
     pub weights: Weights,
     pub inclinations: Inclinations,
+    /// Ablation switches. `builder_setup` places the opening with the builder heuristic
+    /// instead of the search; `counts_only` ignores event history and samples hands from
+    /// public counts alone; `leaf_opponents` makes opponents pick the action that maximizes
+    /// their own static leaf instead of following the builder; `propose` enables trade offers.
+    pub builder_setup: bool,
+    pub counts_only: bool,
+    pub leaf_opponents: bool,
+    pub propose: bool,
 }
 impl Default for SearchConfig {
     fn default() -> Self {
@@ -51,6 +59,10 @@ impl Default for SearchConfig {
             iterative: true,
             weights: Weights::default(),
             inclinations: Inclinations::default(),
+            builder_setup: false,
+            counts_only: false,
+            leaf_opponents: false,
+            propose: true,
         }
     }
 }
@@ -77,6 +89,7 @@ impl SearchConfig {
             scenarios: usize::from(self.scenarios),
             inner_scenarios: usize::from(self.inner_scenarios),
             node_budget: self.node_budget,
+            leaf_opponents: self.leaf_opponents,
         }
     }
 }
@@ -108,6 +121,12 @@ pub fn analyze(
     let o = view.game.as_ref().ok_or(SearchError::NotSeated)?;
     let seat = o.seat.ok_or(SearchError::NotSeated)?;
     let config = config.clone().bounded();
+    let empty: Vec<EventBatch> = Vec::new();
+    let history = if config.counts_only {
+        &empty[..]
+    } else {
+        history
+    };
     let mut knowledge = ResourceKnowledge::from_history_at_version(o, history, view.version);
     for offer in &view.offers {
         if offer.status == OfferStatus::Open && offer.from < o.settings.players {
@@ -125,7 +144,10 @@ pub fn analyze(
         .collect();
     let weights = config.inclinations.apply(config.weights);
     let margin = config.inclinations.trade_margin();
-    let decisions = trades::candidates(view, &knowledge, offered_turn);
+    let mut decisions = trades::candidates(view, &knowledge, offered_turn);
+    if !config.propose {
+        decisions.retain(|d| !d.offer);
+    }
     let root = &worlds[0].state;
     let my_turn = actor(root) == seat;
     // Root actions come from the v2 generator; trade proposals and acceptances from the shared

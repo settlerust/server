@@ -17,6 +17,7 @@ mod transition;
 mod view;
 pub use action::*;
 pub use board::*;
+pub use cards::deck_order;
 pub use chance::*;
 pub use legal::*;
 pub use random::*;

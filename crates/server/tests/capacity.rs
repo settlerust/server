@@ -24,6 +24,7 @@ async fn concurrent_creation_cannot_exceed_capacity_and_existing_retries_still_w
         settings: Settings::default(),
         host_as_player: true,
         player_name: None,
+        seed: None,
     };
     let first = uuid::Uuid::new_v4().to_string();
     let second = uuid::Uuid::new_v4().to_string();

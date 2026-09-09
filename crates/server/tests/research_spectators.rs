@@ -25,6 +25,7 @@ async fn research_spectators_get_live_hands_while_agents_remain_redacted_and_rep
                 settings: Settings::default(),
                 host_as_player: false,
                 player_name: None,
+                seed: None,
             },
             0,
         )

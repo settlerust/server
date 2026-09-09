@@ -148,6 +148,7 @@ async fn archive_outage_does_not_block_restore_or_other_games_delivery() {
                 settings: Settings::default(),
                 host_as_player: true,
                 player_name: None,
+                seed: None,
             },
             0,
         )

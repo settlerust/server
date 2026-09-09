@@ -14,6 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             settings: Settings::default(),
             host_as_player: false,
             player_name: None,
+            seed: None,
         })
         .await?;
     let id = view.id;

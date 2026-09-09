@@ -82,6 +82,11 @@ pub struct Settings {
     pub points_to_win: u8,
     pub discard_limit: u8,
     pub turn_seconds: u32,
+    /// Deterministic mode: the k-th roll, k-th theft, and k-th development draw come from
+    /// seed-derived tapes indexed by count, so different policies on one seed face the same
+    /// luck. Off by default; ordinary games consume one shared random stream.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub deterministic: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -90,6 +95,7 @@ impl Default for Settings {
             points_to_win: 10,
             discard_limit: 7,
             turn_seconds: 120,
+            deterministic: false,
         }
     }
 }

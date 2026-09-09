@@ -33,6 +33,21 @@ pub fn create(
     if let Some(name) = &request.player_name {
         crate::auth::validate_name(name)?;
     }
+    let seed = match request.seed {
+        Some(index) if request.research && request.settings.deterministic => {
+            // A research host may pin the tape; the bytes stay private room state.
+            let mut bytes = [0u8; 32];
+            bytes[..4].copy_from_slice(&index.to_le_bytes());
+            bytes
+        }
+        Some(_) => {
+            return Err(Error::new(
+                ErrorCode::InvalidRequest,
+                "a seed is accepted only for an agent-only research table in deterministic mode",
+            ));
+        }
+        None => seed,
+    };
     let room = Room {
         schema: 1,
         id,

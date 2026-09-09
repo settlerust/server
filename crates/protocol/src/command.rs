@@ -26,6 +26,11 @@ pub struct CreateGame {
     pub host_as_player: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub player_name: Option<String>,
+    /// Seed index for an agent-only research table in deterministic mode. It fixes the board,
+    /// the dice tape, the theft tape, and the deck order; it is never disclosed to participants
+    /// and is rejected for ordinary tables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u32>,
 }
 fn yes() -> bool {
     true

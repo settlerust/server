@@ -52,6 +52,16 @@ The baseline ideas were compared with JSettlers' `OpeningBuildStrategy`, `Discar
 
 `Policy` provides `choose_action`, `accept_trade`, `on_event`, and `conversation` hooks. Its default `choose` checks acceptable incoming offers, invokes the `conversation` hook for an optional public message, then selects a game action. Stateful conversation hooks should return each intended message once so they do not starve game actions. New policies can override `choose` to originate offers, send directed messages, and set filters. Strategies in any other language use the same `Command` schema and need not link Rust.
 
+## Deterministic mode and paired cohorts
+
+`Settings::deterministic` makes every random outcome a fixed function of the
+seed and the outcome's index: roll `k` reads the dice tape at `k`, theft `k`
+reads the theft tape at `k`, and draw `k` takes card `k` of a fixed deck order.
+Two policies on one seed therefore see the same luck in the same order, which
+is what a paired comparison needs. `CreateGame.seed` pins the seed index for an
+agent-only research table in this mode; ordinary tables reject it and keep the
+shared stream. Seats never receive the seed or the tape.
+
 ## Offline engine arena
 
 `crates/arena` runs paired-seed tournaments between the builders and both

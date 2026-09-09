@@ -11,7 +11,7 @@ use std::sync::{
 fn usage() -> ! {
     eprintln!(
         "usage: tournament --seat SPEC [--seat SPEC ...] --seeds A-B [--rotations N] [--threads N] \
-         [--points N] [--max-turns N] [--out FILE] [--trace]\n  SPEC: fast | eta | legal | v1 | v2 | v1:{{json}} | v2:{{json}}"
+         [--points N] [--max-turns N] [--out FILE] [--trace] [--deterministic]\n  SPEC: fast | eta | legal | v1 | v2 | v1:{{json}} | v2:{{json}}"
     );
     std::process::exit(2)
 }
@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut max_turns = 500u32;
     let mut out: Option<String> = None;
     let mut trace = false;
+    let mut deterministic = false;
     let mut i = 0;
     while i < args.len() {
         let value = |i: usize| args.get(i + 1).cloned().unwrap_or_else(|| usage());
@@ -45,6 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--out" => out = Some(value(i)),
             "--trace" => {
                 trace = true;
+                i -= 1;
+            }
+            "--deterministic" => {
+                deterministic = true;
                 i -= 1;
             }
             _ => usage(),
@@ -88,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         settings: Settings {
                             players,
                             points_to_win: points,
+                            deterministic,
                             ..Settings::default()
                         },
                         seed,

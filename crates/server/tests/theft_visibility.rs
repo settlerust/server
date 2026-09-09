@@ -14,6 +14,7 @@ fn theft_resource_is_private_and_old_archives_still_replay() {
             settings: Settings::default(),
             host_as_player: true,
             player_name: Some("Host display name".into()),
+            seed: None,
         },
         identity(0),
         [8; 32],
