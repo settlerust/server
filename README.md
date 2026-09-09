@@ -49,6 +49,15 @@ cargo run --release -p settlers-policies --bin simulate -- 100
 cargo run --release -p settlers-engine --bin bench
 ```
 
+The `remote` runner also seats either expectimax search (`v1`, `v2`, or
+`v2:{json}`), and `crates/arena` plays paired-seed tournaments offline:
+
+```sh
+cargo run --release -p settlers-arena --bin tournament -- --seat v2 --seat eta --seat fast --seat eta --seeds 0-15
+```
+
+See [docs/expectimax.md](docs/expectimax.md) for both searches and the arena.
+
 Local mode stores current state and pending archive events in `data/state.sqlite3`, archived events in `data/archive/game_id=UUID/`, and the persistent JWT signing key in `data/auth.key`. Keep the data directory and each participant's token across restarts.
 
 ## Build a client or policy
