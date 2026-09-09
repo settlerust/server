@@ -387,24 +387,26 @@ fn root_action(
     action: Action,
     _depth: u8,
 ) -> Result<leaf::Terms, SearchError> {
-    let mut afterstates = Vec::new();
-    let mut visited = std::collections::HashSet::new();
-    search.enumerate(
-        worlds.to_vec(),
-        Some(action),
-        &mut afterstates,
-        &mut visited,
-        0,
-    )?;
-    if afterstates.is_empty() {
-        // The action leaves us off-turn without an afterstate (for example a discard during
-        // another player's turn): continue through the round directly.
-        let children = search.step(worlds, seat, action)?;
-        let children = normalize(children);
-        if search.limits.depth <= 1 {
-            return Ok(search.leaf(&children));
+    let children = search.step(worlds, seat, action)?;
+    let mut total = leaf::Terms::default();
+    let mut mass_total = 0.0;
+    let mut groups: std::collections::BTreeMap<u64, Vec<World>> = std::collections::BTreeMap::new();
+    for w in children {
+        if w.weight > 1e-12 {
+            groups
+                .entry(key::information_set(&w.state, seat))
+                .or_default()
+                .push(w);
         }
-        return Ok(search.round(&children, 1)?);
     }
-    Ok(search.resolve(afterstates, 1, usize::MAX, 0)?.0)
+    for (_, group) in groups {
+        let mass: f64 = group.iter().map(|w| w.weight).sum();
+        let (value, _) = search.turn_value(group, 1, 1)?;
+        total.add_scaled(&value, mass);
+        mass_total += mass;
+    }
+    if mass_total > 0.0 {
+        total.scale(1.0 / mass_total);
+    }
+    Ok(total)
 }

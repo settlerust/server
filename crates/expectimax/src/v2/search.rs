@@ -12,8 +12,10 @@ use super::opponent;
 use super::weights::Weights;
 use serde::{Deserialize, Serialize};
 use settlers_engine::*;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
+/// Afterstate groups of one line of play with their probability masses.
+pub type Line = Vec<(f64, Vec<World>)>;
 #[derive(Debug, Clone, Copy)]
 pub struct World {
     pub state: State,
@@ -51,13 +53,7 @@ pub struct Search<'a> {
     pub over_time: &'a dyn Fn() -> bool,
     pub aborted: bool,
     memo: HashMap<(u64, u8), Terms>,
-}
-pub struct Afterstate {
-    pub worlds: Vec<World>,
-    pub mass: f64,
-    pub key: u64,
-    pub static_value: f64,
-    pub first: Option<Action>,
+    lines: HashMap<u64, (f64, Line)>,
 }
 const MAX_STEPS: u32 = 400;
 
@@ -169,6 +165,7 @@ impl<'a> Search<'a> {
             over_time,
             aborted: false,
             memo: HashMap::new(),
+            lines: HashMap::new(),
         }
     }
     fn tick(&mut self, n: u64) {
@@ -505,9 +502,10 @@ impl<'a> Search<'a> {
             }
             Phase::Main => {}
         }
-        if steps >= 24 {
+        if steps >= 12 {
             return vec![Action::EndTurn];
         }
+        out.push(Action::EndTurn);
         if own.cities < 4 && own.resources.contains(Resources::CITY) {
             for v in 0..54u8 {
                 if s.board.building(v) == p + 1 {
@@ -555,60 +553,53 @@ impl<'a> Search<'a> {
         }
         out.extend(self.useful_roads(s, p, 4));
         out.extend(self.bank_trades(s, p, 4));
-        out.push(Action::EndTurn);
         out
     }
 
     // ----- one planned turn ---------------------------------------------------------------
 
-    /// Enumerate afterstates of the root player's turn from a group sharing one information
-    /// set. `first` restricts the first action. Chance splits groups; opponents' pending
-    /// discards resolve with the builder rule.
-    pub fn enumerate(
+    /// Actions to keep at a given step of a turn. The current turn keeps every first action,
+    /// then `EndTurn` plus the best few by static value; later turns follow one greedy line.
+    /// `None` means keep everything; `Some(0)` means the single statically best action.
+    fn step_cap(&self, level: u8, steps: u32) -> Option<usize> {
+        if level > 1 {
+            return Some(0);
+        }
+        match steps {
+            0 => None,
+            1 => Some(3),
+            2 => Some(2),
+            3 => Some(1),
+            _ => Some(usize::MAX),
+        }
+    }
+    /// The statically best continuation of the root player's turn from a group: the maximum
+    /// over own actions of the expectation over chance outcomes, valued by the leaf at every
+    /// end-of-turn position. Returns the value and the afterstate groups of the best line,
+    /// each with its probability mass (chance inside the turn splits the line).
+    pub fn best_line(
         &mut self,
         worlds: Vec<World>,
-        first: Option<Action>,
-        out: &mut Vec<Afterstate>,
-        visited: &mut HashSet<u64>,
+        level: u8,
         steps: u32,
-    ) -> Result<(), RuleError> {
-        if self.aborted || out.len() >= self.limits.afterstates {
-            return Ok(());
-        }
+    ) -> Result<(f64, Line), RuleError> {
         let s = worlds[0].state;
         let key = information_set(&s, self.seat);
-        if !visited.insert(key ^ u64::from(steps == 0)) {
+        if let Some(hit) = self.lines.get(&key) {
             self.stats.transpositions += 1;
-            return Ok(());
+            return Ok(hit.clone());
         }
-        let mass = Self::mass(&worlds);
-        if matches!(s.phase, Phase::Finished { .. }) {
-            let value = self.leaf(&Self::normalized(worlds.clone())).total();
-            out.push(Afterstate {
-                worlds,
-                mass,
-                key,
-                static_value: value,
-                first,
-            });
-            return Ok(());
-        }
+        let worlds = Self::normalized(worlds);
         let p = actor(&s);
-        if p != self.seat && !matches!(s.phase, Phase::Discard { .. }) {
-            // Our turn has ended; this position is an afterstate.
-            let value = self.leaf(&Self::normalized(worlds.clone())).total();
-            out.push(Afterstate {
-                worlds,
-                mass,
-                key,
-                static_value: value,
-                first,
-            });
-            return Ok(());
+        let ended = matches!(s.phase, Phase::Finished { .. })
+            || (p != self.seat && !matches!(s.phase, Phase::Discard { .. }));
+        if ended || self.aborted {
+            let value = self.leaf(&worlds).total();
+            return Ok((value, vec![(1.0, worlds)]));
         }
         if p != self.seat {
             // Another seat must discard before our turn continues.
-            let mut children = Vec::new();
+            let mut children = Vec::with_capacity(worlds.len());
             for w in &worlds {
                 let a = opponent::act(&w.state, p, 0);
                 children.push(World {
@@ -617,61 +608,89 @@ impl<'a> Search<'a> {
                 });
                 self.tick(1);
             }
+            let mut value = 0.0;
+            let mut lines = Vec::new();
             for (_, group) in self.regroup(children) {
-                self.enumerate(group, first, out, visited, steps)?;
+                let mass = Self::mass(&group);
+                let (v, sub) = self.best_line(group, level, steps)?;
+                value += mass * v;
+                lines.extend(sub.into_iter().map(|(m, g)| (m * mass, g)));
             }
-            return Ok(());
+            return Ok((value, lines));
         }
-        self.stats.own_nodes += 1;
-        let actions = match first {
-            Some(a) => vec![a],
+        self.note_node(level);
+        let actions = match self.step_cap(level, steps) {
             None => self.candidates(&s, p, steps),
-        };
-        for a in actions {
-            if self.aborted {
-                return Ok(());
+            Some(usize::MAX) => vec![Action::EndTurn],
+            Some(cap) => {
+                let all = self.candidates(&s, p, steps);
+                self.narrow(&s, p, all, cap)
             }
+        };
+        let mut best: Option<(f64, Line)> = None;
+        for a in actions {
             let children = match self.step(&worlds, p, a) {
                 Ok(children) => children,
                 Err(_) => continue,
             };
-            let ends_turn = children.first().is_some_and(|w| {
-                w.state.current != self.seat || matches!(w.state.phase, Phase::Finished { .. })
-            });
-            if ends_turn {
-                for (k, group) in self.regroup(children) {
-                    if !visited.insert(k) {
-                        self.stats.transpositions += 1;
-                        continue;
-                    }
-                    let mass = Self::mass(&group);
-                    let value = self.leaf(&Self::normalized(group.clone())).total();
-                    out.push(Afterstate {
-                        worlds: group,
-                        mass,
-                        key: k,
-                        static_value: value,
-                        first: first.or(Some(a)),
-                    });
-                    if out.len() >= self.limits.afterstates {
-                        return Ok(());
-                    }
-                }
-            } else {
-                for (_, group) in self.regroup(children) {
-                    self.enumerate(group, first.or(Some(a)), out, visited, steps + 1)?;
-                }
+            let mut value = 0.0;
+            let mut lines = Vec::new();
+            for (_, group) in self.regroup(children) {
+                let mass = Self::mass(&group);
+                let (v, sub) = self.best_line(group, level, steps + 1)?;
+                value += mass * v;
+                lines.extend(sub.into_iter().map(|(m, g)| (m * mass, g)));
+            }
+            if best.as_ref().is_none_or(|b| value > b.0) {
+                best = Some((value, lines));
             }
         }
-        Ok(())
+        let result = best.unwrap_or_else(|| (self.leaf(&worlds).total(), vec![(1.0, worlds)]));
+        if !self.aborted {
+            self.lines.insert(key, result.clone());
+        }
+        Ok(result)
     }
-
-    /// Expected value from a group at the start of the root player's decision, planning
-    /// `level` as the current level. Returns the value and the chosen first action.
-    pub fn plan(
+    /// Keep the `cap` actions whose immediate static value is highest, always keeping
+    /// `EndTurn` when `cap` is positive; `cap == 0` keeps only the single best action.
+    fn narrow(&mut self, s: &State, p: u8, actions: Vec<Action>, cap: usize) -> Vec<Action> {
+        if actions.len() <= cap + 1 {
+            return actions;
+        }
+        let here = evaluate(s, self.seat, &self.w).total();
+        self.stats.leaves += 1;
+        let mut scored: Vec<(f64, Action)> = actions
+            .into_iter()
+            .map(|a| {
+                let value = if a == Action::EndTurn {
+                    if cap > 0 { f64::INFINITY } else { here }
+                } else {
+                    match apply(s, p, a) {
+                        Ok(next) => {
+                            self.stats.leaves += 1;
+                            evaluate(&next, self.seat, &self.w).total()
+                        }
+                        Err(_) => f64::NEG_INFINITY,
+                    }
+                };
+                (value, a)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored
+            .into_iter()
+            .take(cap.max(1) + usize::from(cap > 0))
+            .map(|(_, a)| a)
+            .collect()
+    }
+    /// Value of the root player's turn with lookahead: the statically best line's afterstates
+    /// are followed through the opponents' round and the next planned level. At the deepest
+    /// level the static value is the answer.
+    pub fn turn_value(
         &mut self,
         worlds: Vec<World>,
         level: u8,
+        steps: u32,
     ) -> Result<(Terms, Option<Action>), RuleError> {
         let key = (information_set(&worlds[0].state, self.seat), level);
         if let Some(v) = self.memo.get(&key) {
@@ -679,121 +698,64 @@ impl<'a> Search<'a> {
             return Ok((v.clone(), None));
         }
         let worlds = Self::normalized(worlds);
-        let mut afterstates = Vec::new();
-        let mut visited = HashSet::new();
-        self.enumerate(worlds.clone(), None, &mut afterstates, &mut visited, 0)?;
-        self.note_level(level, afterstates.len());
-        if afterstates.is_empty() {
-            let v = self.leaf(&worlds);
-            return Ok((v, None));
+        let (_, lines) = self.best_line(worlds.clone(), level, steps)?;
+        let mut total = Terms::default();
+        let mut mass_total = 0.0;
+        for (mass, group) in lines {
+            if mass <= 1e-12 {
+                continue;
+            }
+            let group = Self::normalized(group);
+            let value = self.afterstate_value(&group, level)?;
+            total.add_scaled(&value, mass);
+            mass_total += mass;
         }
-        let value = self.resolve(afterstates, level, self.limits.beam, 1)?;
-        self.memo.insert(key, value.0.clone());
-        Ok(value)
+        if mass_total > 0.0 {
+            total.scale(1.0 / mass_total);
+        } else {
+            total = self.leaf(&worlds);
+        }
+        if !self.aborted {
+            self.memo.insert(key, total.clone());
+        }
+        Ok((total, None))
     }
-    fn note_level(&mut self, level: u8, count: usize) {
+    fn afterstate_value(&mut self, worlds: &[World], level: u8) -> Result<Terms, RuleError> {
+        self.note_afterstate(level);
+        if level >= self.limits.depth
+            || matches!(worlds[0].state.phase, Phase::Finished { .. })
+            || self.aborted
+        {
+            return Ok(self.leaf(worlds));
+        }
+        self.stats.expanded += 1;
+        self.round(worlds, level)
+    }
+    /// Plan a whole turn from its first decision.
+    pub fn plan(
+        &mut self,
+        worlds: Vec<World>,
+        level: u8,
+    ) -> Result<(Terms, Option<Action>), RuleError> {
+        self.turn_value(worlds, level, 0)
+    }
+    fn note_node(&mut self, level: u8) {
         let i = level as usize;
         if self.stats.per_level_nodes.len() <= i {
             self.stats.per_level_nodes.resize(i + 1, 0);
             self.stats.per_level_afterstates.resize(i + 1, 0);
         }
         self.stats.per_level_nodes[i] += 1;
-        self.stats.per_level_afterstates[i] += count as u64;
-        self.stats.afterstates += count as u64;
+        self.stats.own_nodes += 1;
     }
-    /// Expand the best afterstates and return the value of the best first action.
-    /// Afterstates sharing a first action combine by probability mass (chance within the turn).
-    pub fn resolve(
-        &mut self,
-        afterstates: Vec<Afterstate>,
-        level: u8,
-        beam: usize,
-        per_first: usize,
-    ) -> Result<(Terms, Option<Action>), RuleError> {
-        // Group afterstates by first action; each group is a distribution over afterstates.
-        let mut by_first: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-        for (i, a) in afterstates.iter().enumerate() {
-            let label = serde_json::to_string(&a.first).unwrap_or_default();
-            by_first.entry(label).or_default().push(i);
+    fn note_afterstate(&mut self, level: u8) {
+        let i = level as usize;
+        if self.stats.per_level_nodes.len() <= i {
+            self.stats.per_level_nodes.resize(i + 1, 0);
+            self.stats.per_level_afterstates.resize(i + 1, 0);
         }
-        // Static value of each first action = mass-weighted static afterstate values.
-        let mut static_first: Vec<(f64, String)> = by_first
-            .iter()
-            .map(|(label, ids)| {
-                let mass: f64 = ids.iter().map(|&i| afterstates[i].mass).sum();
-                let v: f64 = ids
-                    .iter()
-                    .map(|&i| afterstates[i].static_value * afterstates[i].mass)
-                    .sum::<f64>()
-                    / mass.max(1e-12);
-                (v, label.clone())
-            })
-            .collect();
-        static_first.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let last = level >= self.limits.depth;
-        let mut chosen: HashSet<usize> = HashSet::new();
-        if !last {
-            for (_, label) in static_first.iter().take(beam) {
-                for &i in &by_first[label] {
-                    chosen.insert(i);
-                }
-            }
-            // Every first action keeps at least its best afterstates so root candidates are
-            // all searched, not only the statically best ones.
-            for ids in by_first.values() {
-                let mut ranked: Vec<usize> = ids.clone();
-                ranked.sort_by(|&a, &b| {
-                    afterstates[b]
-                        .static_value
-                        .total_cmp(&afterstates[a].static_value)
-                });
-                for &i in ranked.iter().take(per_first) {
-                    chosen.insert(i);
-                }
-            }
-        }
-        let mut values: Vec<Option<Terms>> = vec![None; afterstates.len()];
-        for (i, a) in afterstates.iter().enumerate() {
-            if last {
-                values[i] = Some(self.leaf(&Self::normalized(a.worlds.clone())));
-            } else if chosen.contains(&i) {
-                if self.aborted {
-                    return Ok((Terms::default(), None));
-                }
-                let v = self.round(&Self::normalized(a.worlds.clone()), level)?;
-                self.stats.expanded += 1;
-                values[i] = Some(v);
-            }
-        }
-        let mut best: Option<(f64, Terms, Option<Action>)> = None;
-        for (label, ids) in &by_first {
-            let mut total = Terms::default();
-            let mut mass = 0.0;
-            let mut complete = true;
-            for &i in ids {
-                match &values[i] {
-                    Some(v) => {
-                        total.add_scaled(v, afterstates[i].mass);
-                        mass += afterstates[i].mass;
-                    }
-                    None => complete = false,
-                }
-            }
-            if mass <= 0.0 {
-                continue;
-            }
-            // A first action whose worse afterstates were pruned is valued by its expanded
-            // part only; pruning removes low static branches, so this is optimistic and rare.
-            let _ = complete;
-            total.scale(1.0 / mass);
-            let score = total.total();
-            if best.as_ref().is_none_or(|b| score > b.0) {
-                let first = afterstates[ids[0]].first;
-                best = Some((score, total, first));
-                let _ = label;
-            }
-        }
-        Ok(best.map_or((Terms::default(), None), |b| (b.1, b.2)))
+        self.stats.per_level_afterstates[i] += 1;
+        self.stats.afterstates += 1;
     }
 
     // ----- opponents' round under common random scenarios ------------------------------------
