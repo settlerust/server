@@ -34,23 +34,24 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
             );
             let cands = search.candidates(&s, seat, 0);
             if cands.len() >= 3 {
-                let (value, first) = search
-                    .plan(
+                let (value, line) = search
+                    .best_line(
                         vec![World {
                             state: s,
                             weight: 1.0,
                         }],
                         1,
+                        0,
                     )
                     .unwrap();
-                assert!(first.is_some());
-                assert!(value.total().is_finite());
+                assert!(value.is_finite());
+                assert!(!line.is_empty());
                 assert!(
-                    search.stats.own_nodes >= 2 && search.stats.afterstates >= 2,
-                    "turn {} explored {} nodes and {} afterstates with {} candidates",
+                    search.stats.own_nodes >= 2 && search.stats.leaves > cands.len() as u64,
+                    "turn {} explored {} nodes and {} leaves with {} candidates",
                     s.turn,
                     search.stats.own_nodes,
-                    search.stats.afterstates,
+                    search.stats.leaves,
                     cands.len()
                 );
                 checked += 1;

@@ -174,21 +174,27 @@ frozen comparator; a report from the tunable search carries `policy:
 
 ### Search
 
-A level is one of the root player's turns. Within a level the search enumerates
-the distinct end-of-turn positions reachable by action sequences (afterstates),
-deduplicating transpositions by the player's information set and branching
-exactly over purchases, thefts, and the player's own roll. Candidate actions per
-position are builds, development plays, purchases, roads that shorten the path to
-a reachable site or extend a contested longest road, bank exchanges that reduce a
-build deficit, and ending the turn. Discards enumerate every legal multiset and
-keep the four that best preserve build targets.
+A level is one of the root player's turns. The current turn is planned as a
+small tree: every candidate first action is kept (builds, development plays,
+purchases, roads that shorten the path to a reachable site or extend a
+contested longest road, bank exchanges that reduce a build deficit, and ending
+the turn), later steps keep `EndTurn` plus the three, two, then one best
+actions by static value, and long turns only end. Purchases, thefts, and the
+player's own roll branch exactly over their outcomes; positions reached by
+different action orders share one transposition entry. Discards enumerate every
+legal multiset and keep the four that best preserve the current build target.
+The value of a first action is the maximum over its continuations of the
+expectation over chance, so a candidate is credited with the best line it
+enables, never an average over lines.
 
-Between levels, every other seat plays a fixed builder policy on its sampled hand
-under common random scenarios: stratified dice for the first rolls of the round,
-then a private stream for further rolls, thefts, and draws. The same scenarios
-apply to every afterstate and every root candidate, so comparisons are paired.
-At each inner level the `beam` best first actions by static value are expanded.
-Leaves are evaluated at the end of the deepest planned turn.
+Lookahead is spent on the afterstates of the chosen line. Between levels, every
+other seat plays a fixed builder policy on its sampled hand under common random
+scenarios: stratified dice for the first rolls of the round, then a private
+stream for further rolls, thefts, and draws. The same scenarios apply to every
+candidate, so comparisons are paired. At deeper levels the player's own turn
+follows one greedy line guided by the leaf, and its afterstate is either
+evaluated (deepest level) or followed through another round. Leaves are
+evaluated at the end of the deepest planned turn.
 
 Iterative deepening runs depth 1, 2, and so on up to `depth`, and plays the
 deepest depth that completed within `time_budget_ms` and `node_budget`. A depth
@@ -205,8 +211,8 @@ reproducible bit for bit.
 | `samples` | 4 | Sampled hidden worlds (1–32) |
 | `scenarios` | 8 | Common random scenarios after the current turn (1–64) |
 | `inner_scenarios` | 4 | Scenarios at deeper levels |
-| `beam` | 4 | First actions expanded per inner turn |
-| `afterstates` | 96 | Distinct end-of-turn positions per planned turn |
+| `beam` | 4 | Reserved; later steps of the current turn keep three, two, then one action |
+| `afterstates` | 96 | Reserved cap on end-of-turn positions per planned turn |
 | `iterative` | true | Iterative deepening; false searches only `depth` |
 | `weights` | see below | Leaf weights |
 | `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
