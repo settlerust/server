@@ -51,6 +51,9 @@ fn summarize(report: &settlers_expectimax::Report) -> serde_json::Value {
         "leaves": report.statistics.leaves,
         "afterstates": report.statistics.afterstates,
         "per_level_afterstates": report.statistics.per_level_afterstates,
+        "per_level_nodes": report.statistics.per_level_nodes,
+        "transpositions": report.statistics.transpositions,
+        "scenarios": report.statistics.scenarios,
         "candidates": report.candidates.iter().take(5).map(|c| serde_json::json!({
             "action": c.principal_variation.first(),
             "command": c.command.as_ref().map(|c| serde_json::to_value(c).unwrap_or_default()),
