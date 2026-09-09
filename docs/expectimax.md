@@ -251,6 +251,54 @@ expanded continuations. The reported `statistics` include transitions, leaves,
 afterstates per level, expansions, transpositions, scenarios, the depth completed,
 and elapsed milliseconds.
 
+### Learned n-tuple leaf
+
+`leaf` selects the evaluator. By default the hand-written terms above apply.
+With `"leaf": {"tables": "PATH"}` the search reads a file of learned lookup
+tables (`settlers_expectimax::ntuple`) and values every position as the sum of
+about eighty looked-up numbers, in win-probability units, multiplied by
+`leaf.scale` (default 1000, so one win is worth ten points on the hand-written
+currency). `leaf.hand` adds the hand-written terms scaled by that factor; zero,
+the default, uses the tables alone. Nothing else in the search changes: the
+tables are consulted at end-of-turn positions, for static narrowing, and for
+the leaf-guided opponent model when that switch is on. A finished game is
+exact in both leaves.
+
+Three families of windows share tables across the board: hex windows (resource,
+pips, robber, six corners in five states, canonical under the hex's twelve
+symmetries), intersection windows (the three touching hexes as a sorted triple,
+the building or blocked state, own or foreign road adjacency, the port), and
+five portfolio tables (production pips per resource; hand, hand total,
+settlements and cities left; own and the two best opponent scores with the
+turn bucket; knights, cards held, army and road holders, own trail, roads
+left, deck bucket; the largest opponent hand, best opponent production,
+opponent count, own production, best opponent score). Every window reads only
+the seat's own hand and cards plus public information, so one table serves
+every seat, the search leaf, and training.
+
+Tables load once per process and are shared by every seat naming the same path;
+reports from a tables leaf carry `policy: "expectimax-v2-tables"`. The browser
+build rejects a tables leaf: learned tables are a server-side policy that
+connects to games through the `remote` runner.
+
+`train` in `crates/arena` learns the tables by self-play temporal-difference
+training on shared tables across all threads. Every seat plans its turn with the
+depth-1 search over the tables on the true state (the leaf never sees hidden
+hands); at game end each seat's chain of end-of-turn positions is updated
+backward with TD(lambda) toward 1 for the winner and 0 otherwise, plus a small
+reward per point gained, with temporal-coherence step sizes. The first
+`--warmup-games` are played by the fast builder so the tables start from
+finished games. Each chunk it can validate the frozen tables as the depth-2
+leaf against the hand-written leaf with the two builders on fixed deterministic
+seeds, keeps the best validation point as `best.bin`, and stops on a game, wall,
+or plateau budget:
+
+```sh
+cargo run --release -p settlers-arena --bin train -- \
+  --out runs/ntuple/full --layout hex,vertex,portfolio --wall-seconds 7200 \
+  --chunk-games 40000 --validate-seeds 32 --plateau-window 3
+```
+
 ### Browser defaults
 
 Seated browser workers request the tunable search with a depth cap of 3, a
@@ -275,7 +323,8 @@ cargo run --release -p settlers-arena --bin tournament -- \
 ```
 
 Seat specs are `fast`, `eta`, `legal`, `v1`, `v2`, or `v1:{json}` and
-`v2:{json}` with a configuration object. Output is one JSON line per game with
+`v2:{json}` with a configuration object; `v2:{"leaf":{"tables":"PATH"}}` seats
+the search with learned tables. Output is one JSON line per game with
 the winner, per-seat points, builds, trades, discards, decision timing, and search
 effort; `--trace` adds each search seat's top candidates per decision. Player
 trades are resolved by asking each recipient in seat order; the first acceptance

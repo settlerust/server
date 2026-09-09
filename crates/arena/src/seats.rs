@@ -1,7 +1,7 @@
 //! Seat adapters. Every adapter decides from a `GameView` plus its own event history.
 use serde::{Deserialize, Serialize};
 use settlers_engine::{Action, Phase, automatic_discard};
-use settlers_expectimax::v2::SearchConfig;
+use settlers_expectimax::v2::{Leaf, SearchConfig};
 use settlers_expectimax::{Config, analyze};
 use settlers_policies::trading::TradingPolicy;
 use settlers_policies::{Policy, eta_builder::EtaBuilder, fast_builder::FastBuilder};
@@ -111,19 +111,28 @@ pub fn build_seat(spec: &SeatSpec) -> Result<Box<dyn Seat>, String> {
                 Some(value) => serde_json::from_value(value.clone()).map_err(|e| e.to_string())?,
                 None => SearchConfig::default(),
             };
-            Box::new(TunableExpectimax {
-                config,
-                offered_turn: None,
-                effort: Effort::default(),
-                last: None,
-            })
+            let leaf = Leaf::from_config(&config).map_err(|e| e.to_string())?;
+            search_seat(config, leaf)
         }
         other => return Err(format!("unknown seat kind {other}")),
+    })
+}
+/// A tunable-search seat with an explicit leaf, for tables already in memory (training
+/// validation). The label echoes the configuration; when the tables came from memory the
+/// `leaf.tables` field names the model fingerprint rather than a file.
+pub fn search_seat(config: SearchConfig, leaf: Leaf) -> Box<dyn Seat> {
+    Box::new(TunableExpectimax {
+        config,
+        leaf,
+        offered_turn: None,
+        effort: Effort::default(),
+        last: None,
     })
 }
 
 struct TunableExpectimax {
     config: SearchConfig,
+    leaf: Leaf,
     offered_turn: Option<u32>,
     effort: Effort,
     last: Option<serde_json::Value>,
@@ -138,12 +147,13 @@ impl Seat for TunableExpectimax {
     fn choose(&mut self, view: &GameView, history: &[EventBatch]) -> Option<Command> {
         let started = std::time::Instant::now();
         let clock = || started.elapsed().as_secs_f64() * 1000.0;
-        match settlers_expectimax::v2::analyze(
+        match settlers_expectimax::v2::analyze_with(
             view,
             history,
             &self.config,
             self.offered_turn,
             &clock,
+            &self.leaf,
         ) {
             Ok(report) => {
                 self.effort.decision_nodes += report.statistics.own_nodes;

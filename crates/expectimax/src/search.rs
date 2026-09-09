@@ -18,6 +18,8 @@ pub enum SearchError {
     InconsistentBelief,
     #[error("continuation could not reach the next-turn horizon")]
     Horizon,
+    #[error("learned tables unavailable: {0}")]
+    Tables(String),
     #[error(transparent)]
     Rule(#[from] RuleError),
     #[error(transparent)]

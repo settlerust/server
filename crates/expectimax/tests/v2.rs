@@ -184,3 +184,65 @@ fn reciprocity_scales_willingness_by_observed_acceptances() {
     assert!((factor[2] - 2.0 * 1.0 / 4.0).abs() < 1e-9);
     assert!((factor[3] - 1.0).abs() < 1e-9);
 }
+
+#[test]
+fn learned_tables_seat_the_search_and_rank_true_states() {
+    use settlers_expectimax::ntuple::{Layout, Model};
+    use settlers_expectimax::v2::{Leaf, LeafConfig, analyze_with, rank_state};
+    use std::sync::Arc;
+    let (mut state, history) = common::fixture(4);
+    let model = Arc::new(Model::new(
+        Layout::parse("hex,vertex,portfolio").unwrap(),
+        0.25,
+        false,
+    ));
+    let leaf = Leaf::tables(model, 1000.0, 0.0);
+    let config = SearchConfig {
+        depth: 1,
+        propose: false,
+        ..quick()
+    };
+    let mut ranked_decisions = 0;
+    let mut steps = 0;
+    while !matches!(state.phase, Phase::Finished { .. }) && steps < 400 {
+        steps += 1;
+        let actor = match state.phase {
+            Phase::Discard { pending } => pending.trailing_zeros() as u8,
+            _ => state.current,
+        };
+        let action = if actor == 0 && state.turn < 12 {
+            let view = common::view(&state, actor, history.len() as u64);
+            let report = analyze_with(&view, &history, &config, None, &|| 0.0, &leaf).unwrap();
+            assert_eq!(report.policy, "expectimax-v2-tables");
+            for c in &report.candidates {
+                assert!((c.contributions.total() - c.expected_value).abs() < 1e-6);
+                assert!(c.contributions.0.contains_key("tables") || c.contributions.0.contains_key("terminal") || c.contributions.0.contains_key("expected"));
+            }
+            let ranked = rank_state(&state, actor, &config, &leaf, 1).unwrap();
+            assert!(!ranked.is_empty());
+            assert!(ranked.iter().all(|(a, v)| v.is_finite() && apply(&state, actor, *a).is_ok()));
+            ranked_decisions += 1;
+            match act(&state, actor, &report.candidates[0].command.clone().unwrap()) {
+                Some(a) => a,
+                None => continue,
+            }
+        } else {
+            settlers_expectimax::v2::opponent::act(&state, actor, 0)
+        };
+        state = match apply(&state, actor, action) {
+            Ok(next) => next,
+            Err(_) => apply(&state, actor, *legal_actions(&state, actor).first().unwrap()).unwrap(),
+        };
+    }
+    assert!(ranked_decisions >= 3);
+    // A missing table file is a search error, never a silent fallback to the hand leaf.
+    let missing = SearchConfig {
+        leaf: LeafConfig {
+            tables: Some("/nonexistent/tables.bin".into()),
+            ..LeafConfig::default()
+        },
+        ..SearchConfig::default()
+    };
+    assert!(Leaf::from_config(&missing).is_err());
+    assert!(Leaf::from_config(&SearchConfig::default()).unwrap().is_hand());
+}

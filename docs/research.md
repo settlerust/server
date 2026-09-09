@@ -67,6 +67,8 @@ shared stream. Seats never receive the seed or the tape.
 `crates/arena` runs paired-seed tournaments between the builders and both
 expectimax searches with only redacted observations and participant events
 crossing into a seat. See [expectimax.md](expectimax.md#offline-engine-arena).
+The same crate's `train` binary learns n-tuple leaf tables by self-play; see
+[the learned leaf](expectimax.md#learned-n-tuple-leaf).
 It is a development tier: the protocol arena in the research repository remains
 the confirmation tier.
 

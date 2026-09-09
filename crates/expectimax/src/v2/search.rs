@@ -6,8 +6,9 @@
 //! builder policy under common random scenarios: every afterstate and every root candidate sees
 //! the same stratified dice, so comparisons are paired. Leaves are evaluated at the end of the
 //! deepest planned turn. Iterative deepening keeps the deepest fully completed level count.
+use super::Leaf;
 use super::key::information_set;
-use super::leaf::{Terms, evaluate};
+use super::leaf::Terms;
 use super::opponent;
 use super::weights::Weights;
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,8 @@ pub struct Search<'a> {
     /// Returns true once the time budget is exhausted.
     pub over_time: &'a dyn Fn() -> bool,
     pub aborted: bool,
+    /// The leaf evaluator: hand-written terms or learned tables.
+    pub model: Leaf,
     memo: HashMap<(u64, u8), Terms>,
     lines: HashMap<u64, (f64, Line)>,
 }
@@ -158,7 +161,13 @@ impl Scenario {
 }
 
 impl<'a> Search<'a> {
-    pub fn new(seat: u8, w: Weights, limits: Limits, over_time: &'a dyn Fn() -> bool) -> Self {
+    pub fn new(
+        seat: u8,
+        w: Weights,
+        limits: Limits,
+        over_time: &'a dyn Fn() -> bool,
+        model: Leaf,
+    ) -> Self {
         Self {
             seat,
             w,
@@ -166,9 +175,15 @@ impl<'a> Search<'a> {
             stats: Stats::default(),
             over_time,
             aborted: false,
+            model,
             memo: HashMap::new(),
             lines: HashMap::new(),
         }
+    }
+    /// Static value of a position from seat `p`'s perspective under the configured leaf.
+    #[inline]
+    pub fn value(&self, s: &State, p: u8) -> Terms {
+        self.model.evaluate(s, p, &self.w)
     }
     fn tick(&mut self, n: u64) {
         self.stats.transitions += n;
@@ -181,7 +196,7 @@ impl<'a> Search<'a> {
     pub fn leaf(&mut self, worlds: &[World]) -> Terms {
         let mut value = Terms::default();
         for w in worlds {
-            let terms = evaluate(&w.state, self.seat, &self.w);
+            let terms = self.value(&w.state, self.seat);
             value.add_scaled(&terms, w.weight);
             self.stats.leaves += 1;
         }
@@ -459,7 +474,7 @@ impl<'a> Search<'a> {
                     .filter(|&v| settlement_allowed(s, p, v, true))
                     .map(|v| {
                         let next = apply(s, p, Action::BuildSettlement { vertex: v }).ok();
-                        let value = next.map_or(0.0, |n| evaluate(&n, p, &self.w).total());
+                        let value = next.map_or(0.0, |n| self.value(&n, p).total());
                         (value, v)
                     })
                     .collect();
@@ -659,7 +674,7 @@ impl<'a> Search<'a> {
         if actions.len() <= cap + 1 {
             return actions;
         }
-        let here = evaluate(s, self.seat, &self.w).total();
+        let here = self.value(s, self.seat).total();
         self.stats.leaves += 1;
         let mut scored: Vec<(f64, Action)> = actions
             .into_iter()
@@ -670,7 +685,7 @@ impl<'a> Search<'a> {
                     match apply(s, p, a) {
                         Ok(next) => {
                             self.stats.leaves += 1;
-                            evaluate(&next, self.seat, &self.w).total()
+                            self.value(&next, self.seat).total()
                         }
                         Err(_) => f64::NEG_INFINITY,
                     }
@@ -776,9 +791,9 @@ impl<'a> Search<'a> {
         for a in candidates {
             let value = match a {
                 Action::Roll => f64::INFINITY,
-                Action::EndTurn => evaluate(s, p, &self.w).total(),
+                Action::EndTurn => self.value(s, p).total(),
                 _ => match apply(s, p, a) {
-                    Ok(next) => evaluate(&next, p, &self.w).total(),
+                    Ok(next) => self.value(&next, p).total(),
                     Err(_) => continue,
                 },
             };

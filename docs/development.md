@@ -69,6 +69,7 @@ cargo run --release -p settlers-policies --bin simulate -- 100
 ```sh
 cargo run --release -p settlers-arena --bin tournament -- --seat v2 --seat eta --seat fast --seat eta --seeds 0-15
 cargo run --release -p settlers-arena --bin structure -- --seeds 0-7 --depths 1,2,3 --out structure.jsonl
+cargo run --release -p settlers-arena --bin train -- --out /tmp/ntuple --wall-seconds 600 --plateau-window 3
 ```
 
 `tournament` plays paired-seed games between seat policies on every core and

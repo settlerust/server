@@ -12,7 +12,94 @@ use serde::{Deserialize, Serialize};
 use settlers_engine::*;
 use settlers_protocol::knowledge::ResourceKnowledge;
 use settlers_protocol::{EventBatch, GameView, OfferStatus};
+use std::sync::Arc;
 pub use weights::{Inclinations, Weights};
+
+/// Which leaf the search uses. Without `tables` the hand-written terms apply. With a table
+/// path, the learned n-tuple value (win-probability units) is multiplied by `scale` so that
+/// it lives on the hand-written currency; `hand` adds the hand-written terms scaled by that
+/// factor (zero means the tables alone). Tables load once per process and are shared.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LeafConfig {
+    pub tables: Option<String>,
+    pub scale: f64,
+    pub hand: f64,
+}
+impl Default for LeafConfig {
+    fn default() -> Self {
+        Self {
+            tables: None,
+            scale: 1000.0,
+            hand: 0.0,
+        }
+    }
+}
+/// The leaf evaluator handed to a search: hand-written terms, or learned tables.
+#[derive(Clone)]
+pub enum Leaf {
+    Hand,
+    Tables {
+        model: Arc<crate::ntuple::Model>,
+        scale: f64,
+        hand: f64,
+    },
+}
+impl Leaf {
+    /// Frozen tables from memory, with the given scale and hand-written blend.
+    pub fn tables(model: Arc<crate::ntuple::Model>, scale: f64, hand: f64) -> Self {
+        Self::Tables { model, scale, hand }
+    }
+    /// Resolve a configuration: load the named tables (native builds only).
+    pub fn from_config(config: &SearchConfig) -> Result<Self, SearchError> {
+        let Some(path) = &config.leaf.tables else {
+            return Ok(Self::Hand);
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Err(SearchError::Tables(
+                "learned tables are not available in the browser build".into(),
+            ))
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let model = crate::ntuple::shared(path).map_err(SearchError::Tables)?;
+            Ok(Self::Tables {
+                model,
+                scale: config.leaf.scale,
+                hand: config.leaf.hand,
+            })
+        }
+    }
+    pub fn is_hand(&self) -> bool {
+        matches!(self, Self::Hand)
+    }
+    /// Static value of a position from seat `p`'s perspective. A finished game is exact in
+    /// both leaves; the tables never see terminal positions.
+    #[inline]
+    pub fn evaluate(&self, s: &State, p: u8, w: &Weights) -> leaf::Terms {
+        match self {
+            Self::Hand => leaf::evaluate(s, p, w),
+            Self::Tables { model, scale, hand } => {
+                let mut terms = leaf::Terms::default();
+                if let Phase::Finished { winner } = s.phase {
+                    terms
+                        .0
+                        .insert("terminal", if winner == p { *scale } else { 0.0 });
+                    return terms;
+                }
+                terms
+                    .0
+                    .insert("tables", f64::from(model.value(s, p)) * scale);
+                if *hand > 0.0 {
+                    terms.add_scaled(&leaf::evaluate(s, p, w), *hand);
+                }
+                terms
+            }
+        }
+    }
+}
 
 /// Search settings. Depth is the cap on planned own turns; time and node budgets stop
 /// iterative deepening early, and the deepest completed depth is played.
@@ -47,6 +134,8 @@ pub struct SearchConfig {
     /// Scale the willingness model per partner by that partner's observed acceptance rate of
     /// this seat's offers (Laplace-smoothed from the public trade record).
     pub reciprocity: bool,
+    /// Leaf evaluator: hand-written terms by default, or learned n-tuple tables.
+    pub leaf: LeafConfig,
 }
 impl Default for SearchConfig {
     fn default() -> Self {
@@ -67,6 +156,7 @@ impl Default for SearchConfig {
             leaf_opponents: false,
             propose: true,
             reciprocity: false,
+            leaf: LeafConfig::default(),
         }
     }
 }
@@ -81,6 +171,8 @@ impl SearchConfig {
         self.afterstates = self.afterstates.clamp(4, 1024);
         self.time_budget_ms = self.time_budget_ms.clamp(0.0, 3_600_000.0);
         self.inclinations = self.inclinations.clamped();
+        self.leaf.scale = self.leaf.scale.clamp(1.0, 1_000_000.0);
+        self.leaf.hand = self.leaf.hand.clamp(0.0, 10.0);
         self
     }
     fn limits(&self, depth: u8) -> Limits {
@@ -111,13 +203,26 @@ fn actor(s: &State) -> u8 {
 }
 
 /// Rank the root player's decisions using only the seated observation and its own history.
-/// `clock` returns elapsed milliseconds since the call began.
+/// `clock` returns elapsed milliseconds since the call began. The leaf named by the
+/// configuration is resolved here; use `analyze_with` to pass tables already in memory.
 pub fn analyze(
     view: &GameView,
     history: &[EventBatch],
     config: &SearchConfig,
     offered_turn: Option<u32>,
     clock: &dyn Fn() -> f64,
+) -> Result<Report, SearchError> {
+    let leaf = Leaf::from_config(config)?;
+    analyze_with(view, history, config, offered_turn, clock, &leaf)
+}
+/// `analyze` with an explicit leaf evaluator.
+pub fn analyze_with(
+    view: &GameView,
+    history: &[EventBatch],
+    config: &SearchConfig,
+    offered_turn: Option<u32>,
+    clock: &dyn Fn() -> f64,
+    leaf: &Leaf,
 ) -> Result<Report, SearchError> {
     if view.research_hands.is_some() {
         return Err(SearchError::NotSeated);
@@ -163,7 +268,7 @@ pub fn analyze(
     // enumerator. Discards get several candidates instead of the single automatic suggestion.
     let mut actions: Vec<Action> = Vec::new();
     if my_turn {
-        let probe = Search::new(seat, weights, config.limits(1), &|| false);
+        let probe = Search::new(seat, weights, config.limits(1), &|| false, leaf.clone());
         actions = if matches!(root.phase, Phase::Discard { .. }) {
             Search::discard_candidates(root, seat, 4)
         } else {
@@ -186,7 +291,13 @@ pub fn analyze(
     let start_depth = if config.iterative { 1 } else { config.depth };
     let mut cumulative = search::Stats::default();
     for depth in start_depth..=max_depth {
-        let mut search = Search::new(seat, weights, config.limits(depth), &over_time);
+        let mut search = Search::new(
+            seat,
+            weights,
+            config.limits(depth),
+            &over_time,
+            leaf.clone(),
+        );
         let mut rows: Vec<Row> = Vec::new();
         let mut best_plain: Option<f64> = None;
         for a in &actions {
@@ -323,7 +434,7 @@ pub fn analyze(
         Some(r) => r,
         None => {
             // Even a one-turn plan was cut off: rank by static leaf so play never stalls.
-            let mut search = Search::new(seat, weights, config.limits(1), &|| false);
+            let mut search = Search::new(seat, weights, config.limits(1), &|| false, leaf.clone());
             let mut rows = Vec::new();
             for a in &actions {
                 let children = search.step(&worlds, seat, *a)?;
@@ -360,7 +471,11 @@ pub fn analyze(
     let top_ids = candidates.iter().take(3).map(|c| c.id.clone()).collect();
     let players = u32::from(o.settings.players);
     Ok(Report {
-        policy: "expectimax-v2".into(),
+        policy: if leaf.is_hand() {
+            "expectimax-v2".into()
+        } else {
+            "expectimax-v2-tables".into()
+        },
         version: view.version,
         seat,
         config: crate::Config {
@@ -451,6 +566,38 @@ pub fn reciprocity(history: &[EventBatch], seat: u8) -> [f64; 4] {
         }
     }
     std::array::from_fn(|q| 2.0 * f64::from(accepted[q] + 1) / f64::from(closed[q] + 2))
+}
+/// Rank the actor's candidate actions on a fully known state: the value of each action's
+/// best line at the given depth under the leaf. Training and offline diagnostics only, never
+/// seated play; the state's hidden hands reach the turn planner's chance branches but never
+/// the leaf, which reads only the seat's own information.
+pub fn rank_state(
+    state: &State,
+    seat: u8,
+    config: &SearchConfig,
+    leaf: &Leaf,
+    depth: u8,
+) -> Result<Vec<(Action, f64)>, SearchError> {
+    let config = config.clone().bounded();
+    let weights = config.inclinations.apply(config.weights);
+    let never = || false;
+    let mut search = Search::new(seat, weights, config.limits(depth), &never, leaf.clone());
+    let mut actions = if matches!(state.phase, Phase::Discard { .. }) {
+        Search::discard_candidates(state, seat, 4)
+    } else {
+        search.candidates(state, seat, 0)
+    };
+    actions.retain(|&a| apply(state, seat, a).is_ok());
+    let worlds = vec![World {
+        state: *state,
+        weight: 1.0,
+    }];
+    let mut out = Vec::with_capacity(actions.len());
+    for a in actions {
+        let value = root_action(&mut search, &worlds, seat, a, depth)?;
+        out.push((a, value.total()));
+    }
+    Ok(out)
 }
 fn normalize(mut worlds: Vec<World>) -> Vec<World> {
     let mass: f64 = worlds.iter().map(|w| w.weight).sum();

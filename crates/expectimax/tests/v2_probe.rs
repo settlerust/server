@@ -32,6 +32,7 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
                     leaf_opponents: false,
                 },
                 &never,
+                settlers_expectimax::v2::Leaf::Hand,
             );
             let cands = search.candidates(&s, seat, 0);
             if cands.len() >= 3 {

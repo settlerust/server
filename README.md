@@ -56,7 +56,9 @@ The `remote` runner also seats either expectimax search (`v1`, `v2`, or
 cargo run --release -p settlers-arena --bin tournament -- --seat v2 --seat eta --seat fast --seat eta --seeds 0-15
 ```
 
-See [docs/expectimax.md](docs/expectimax.md) for both searches and the arena.
+`train` in the same crate learns n-tuple leaf tables by self-play; a `leaf.tables` path in a `v2:{json}`
+spec seats the search with them. See [docs/expectimax.md](docs/expectimax.md) for both searches, the
+learned leaf, and the arena.
 
 Local mode stores current state and pending archive events in `data/state.sqlite3`, archived events in `data/archive/game_id=UUID/`, and the persistent JWT signing key in `data/auth.key`. Keep the data directory and each participant's token across restarts.
 
