@@ -1,0 +1,251 @@
+//! Additive leaf for the v2 search. Reads own cards and public information in a sampled world.
+use super::weights::Weights;
+use crate::leaf::site_value;
+use serde::Serialize;
+use settlers_engine::*;
+use std::collections::BTreeMap;
+
+/// Named terms whose sum is exactly the leaf value.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Terms(pub BTreeMap<&'static str, f64>);
+impl Terms {
+    pub fn total(&self) -> f64 {
+        self.0.values().sum()
+    }
+    pub fn add_scaled(&mut self, other: &Terms, weight: f64) {
+        for (k, v) in &other.0 {
+            *self.0.entry(k).or_insert(0.0) += v * weight;
+        }
+    }
+    pub fn scale(&mut self, factor: f64) {
+        for v in self.0.values_mut() {
+            *v *= factor;
+        }
+    }
+    pub fn owned(&self) -> BTreeMap<String, f64> {
+        self.0.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    }
+}
+
+/// Expected cards per roll for a seat, per resource, excluding the robber's hex.
+pub fn rates(s: &State, p: u8) -> [f64; 5] {
+    crate::leaf::rates(s, p)
+}
+/// Reachable legal settlement sites: best value/(1+distance) and the count of others.
+pub fn reach(s: &State, p: u8) -> (f64, u32) {
+    let (value, others, distance) = reach_detail(s, p);
+    (value / (1.0 + f64::from(distance)), others)
+}
+/// Turns until a cost is affordable from the hand at the seat's production per own turn.
+fn eta_turns(s: &State, hand: Resources, cost: Resources, rates: &[f64; 5]) -> f64 {
+    let per_turn = f64::from(s.settings.players);
+    (0..5)
+        .map(|r| f64::from(cost.0[r].saturating_sub(hand.0[r])) / (rates[r] * per_turn + 0.03))
+        .fold(0.0, f64::max)
+}
+/// The best target build, valued by its gain discounted by the turns needed to afford it.
+fn plan_value(
+    s: &State,
+    p: u8,
+    rates: &[f64; 5],
+    w: &Weights,
+    future: f64,
+    best_site: f64,
+    best_distance: u8,
+) -> f64 {
+    let own = s.players[p as usize];
+    let mut best = 0.0f64;
+    let mut consider = |gain: f64, cost: Resources| {
+        let eta = eta_turns(s, own.resources, cost, rates);
+        best = best.max(gain / (1.0 + eta));
+    };
+    if own.cities < 4 {
+        let mut top = 0.0f64;
+        for v in 0..54u8 {
+            if s.board.building(v) == p + 1 {
+                top = top.max(site_value(s, v));
+            }
+        }
+        if top > 0.0 {
+            consider(w.point + top * future * 0.9, Resources::CITY);
+        }
+    }
+    if own.settlements < 5 && best_site > 0.0 {
+        let mut cost = Resources::SETTLEMENT;
+        cost.0[0] = cost.0[0].saturating_add(best_distance);
+        cost.0[1] = cost.0[1].saturating_add(best_distance);
+        consider(w.point + best_site * future * 0.9, cost);
+    }
+    if s.deck_count() > 0 {
+        consider(0.2 * w.point + w.development, Resources::DEVELOPMENT);
+    }
+    best * w.readiness
+}
+/// Best reachable site value, count of other sites, and the best site's road distance.
+pub fn reach_detail(s: &State, p: u8) -> (f64, u32, u8) {
+    let mut distance = [u8::MAX; 54];
+    let mut queue = Vec::with_capacity(54);
+    for v in 0..54u8 {
+        if s.board.owner(v) == Some(p)
+            || (s.board.building(v) == 0
+                && topology().incident_edges[v as usize]
+                    .iter()
+                    .any(|&e| s.board.road(e) == Some(p)))
+        {
+            distance[v as usize] = 0;
+            queue.push(v);
+        }
+    }
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        let v = queue[cursor];
+        cursor += 1;
+        for &e in &topology().incident_edges[v as usize] {
+            if s.board.road(e).is_some() {
+                continue;
+            }
+            let [a, b] = topology().edges[e as usize];
+            let next = if a == v { b } else { a };
+            if s.board.owner(next).is_some_and(|owner| owner != p) {
+                continue;
+            }
+            if distance[next as usize] > distance[v as usize] + 1 {
+                distance[next as usize] = distance[v as usize] + 1;
+                queue.push(next);
+            }
+        }
+    }
+    let roads_left = 15 - s.players[p as usize].roads;
+    let mut best = (0.0f64, 0u8);
+    let mut count = 0u32;
+    for v in 0..54u8 {
+        if distance[v as usize] <= roads_left && settlement_allowed(s, p, v, true) {
+            count += 1;
+            let value = site_value(s, v) / (1.0 + f64::from(distance[v as usize]));
+            if value > best.0 / (1.0 + f64::from(best.1)) {
+                best = (site_value(s, v), distance[v as usize]);
+            }
+        }
+    }
+    (best.0, count.saturating_sub(1), best.1)
+}
+fn port_value(s: &State, p: u8, rates: &[f64; 5], w: &Weights, future: f64) -> f64 {
+    let mut value = 0.0f64;
+    let mut generic = false;
+    for (i, vertices) in topology().ports.iter().enumerate() {
+        if !vertices.iter().any(|&v| s.board.owner(v) == Some(p)) {
+            continue;
+        }
+        match s.layout.ports[i] {
+            0 => generic = true,
+            r => value += w.port_match * rates[(r - 1) as usize] * future,
+        }
+    }
+    if generic {
+        value += w.port_generic;
+    }
+    value
+}
+/// Rolls that remain in the game under the configured length estimate.
+pub fn remaining_rolls(s: &State, w: &Weights) -> f64 {
+    (w.turns_per_player * f64::from(s.settings.players) - f64::from(s.turn)).max(w.minimum_rolls)
+}
+pub fn evaluate(s: &State, p: u8, w: &Weights) -> Terms {
+    let own = s.players[p as usize];
+    let rates = rates(s, p);
+    let mut t = BTreeMap::new();
+    let finished = matches!(s.phase, Phase::Finished { .. });
+    if let Phase::Finished { winner } = s.phase {
+        t.insert(
+            "terminal",
+            if winner == p { w.terminal } else { -w.terminal },
+        );
+    }
+    t.insert("points", f64::from(points(s, p)) * w.point);
+    let mut max_opp = 0.0f64;
+    let mut sum_opp = 0.0;
+    let mut max_opp_rate = 0.0f64;
+    for other in 0..s.settings.players {
+        if other == p {
+            continue;
+        }
+        let pts = f64::from(public_points(s, other));
+        max_opp = max_opp.max(pts);
+        sum_opp += pts;
+        if w.opponent_production != 0.0 {
+            max_opp_rate = max_opp_rate.max(crate::leaf::rates(s, other).iter().sum::<f64>());
+        }
+    }
+    t.insert(
+        "opponent_progress",
+        max_opp * w.opponent_max_point + sum_opp * w.opponent_sum_point,
+    );
+    if w.opponent_production != 0.0 {
+        t.insert("opponent_production", max_opp_rate * w.opponent_production);
+    }
+    if finished {
+        return Terms(t);
+    }
+    let rolls = remaining_rolls(s, w);
+    let future = w.card_value * rolls;
+    let rate_value: f64 = rates.iter().zip(w.resource_value).map(|(r, v)| r * v).sum();
+    t.insert("production", rate_value * future);
+    t.insert(
+        "hand",
+        f64::from(own.resources.total()) * w.card_value * w.hand_discount,
+    );
+    t.insert(
+        "diversity",
+        rates.iter().map(|r| (r / 0.08).min(1.0)).sum::<f64>() / 5.0 * w.diversity,
+    );
+    let (best_site, others, best_distance) = if own.settlements < 5 {
+        reach_detail(s, p)
+    } else {
+        (0.0, 0, 0)
+    };
+    t.insert(
+        "plan",
+        plan_value(s, p, &rates, w, future, best_site, best_distance),
+    );
+    if own.settlements < 5 {
+        t.insert(
+            "expansion",
+            best_site / (1.0 + f64::from(best_distance)) * future * w.expansion
+                + f64::from(others.min(6)) * w.expansion_sites,
+        );
+    }
+    t.insert(
+        "development",
+        (0..4)
+            .map(|r| f64::from(own.development[r] + own.new_development[r]))
+            .sum::<f64>()
+            * w.development
+            + f64::from(own.played_knights) * w.knight,
+    );
+    let length = if own.roads >= 4 {
+        road_length(s, p)
+    } else {
+        own.roads
+    };
+    let mut road = f64::from(length) * w.road_length;
+    if s.longest_road != Some(p) && own.roads >= 4 && own.roads < 15 {
+        let leader = (0..s.settings.players)
+            .filter(|&o| o != p)
+            .map(|o| road_length(s, o))
+            .max()
+            .unwrap_or(0)
+            .max(4);
+        if length + 1 > leader {
+            road += w.road_contention * 0.5;
+        }
+    }
+    t.insert("road", road);
+    let cards = own.resources.total();
+    if cards > s.settings.discard_limit as u16 {
+        let seven = 1.0 - (5.0f64 / 6.0).powi(i32::from(s.settings.players));
+        let loss = seven * f64::from(cards / 2) * w.card_value * w.hand_discount;
+        t.insert("hand_risk", -loss * w.hand_risk);
+    }
+    t.insert("ports", port_value(s, p, &rates, w, future));
+    Terms(t)
+}

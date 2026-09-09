@@ -2714,6 +2714,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "settlers-arena"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "settlers-engine",
+ "settlers-expectimax",
+ "settlers-policies",
+ "settlers-protocol",
+]
+
+[[package]]
 name = "settlers-client"
 version = "0.1.0"
 dependencies = [
@@ -2744,6 +2756,7 @@ dependencies = [
 name = "settlers-expectimax"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "serde",
  "serde_json",
  "settlers-engine",
@@ -2759,6 +2772,7 @@ dependencies = [
  "serde_json",
  "settlers-client",
  "settlers-engine",
+ "settlers-expectimax",
  "settlers-protocol",
  "tokio",
 ]

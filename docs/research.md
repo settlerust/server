@@ -52,6 +52,14 @@ The baseline ideas were compared with JSettlers' `OpeningBuildStrategy`, `Discar
 
 `Policy` provides `choose_action`, `accept_trade`, `on_event`, and `conversation` hooks. Its default `choose` checks acceptable incoming offers, invokes the `conversation` hook for an optional public message, then selects a game action. Stateful conversation hooks should return each intended message once so they do not starve game actions. New policies can override `choose` to originate offers, send directed messages, and set filters. Strategies in any other language use the same `Command` schema and need not link Rust.
 
+## Offline engine arena
+
+`crates/arena` runs paired-seed tournaments between the builders and both
+expectimax searches with only redacted observations and participant events
+crossing into a seat. See [expectimax.md](expectimax.md#offline-engine-arena).
+It is a development tier: the protocol arena in the research repository remains
+the confirmation tier.
+
 ## Experiments
 
 Record the game ID, policy versions, rules configuration, complete typed observations/communications, action UUIDs, and evaluation protocol. The private archive is suitable for auditing exact states and replay; evaluate policies against redacted information rather than training/evaluating with future or hidden cards by accident.

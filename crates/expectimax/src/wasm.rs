@@ -1,3 +1,4 @@
+use crate::v2::SearchConfig;
 use crate::{Config, analyze};
 use serde::Deserialize;
 use settlers_protocol::{EventBatch, GameView};
@@ -17,6 +18,23 @@ struct Request {
     view: GameView,
     #[serde(default)]
     config: Config,
+    /// When present, the tunable v2 search runs instead of the frozen reference.
+    #[serde(default)]
+    search: Option<SearchConfig>,
+}
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> f64 {
+    js_sys::Date::now()
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    use std::sync::OnceLock;
+    static START: OnceLock<std::time::Instant> = OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
 }
 #[wasm_bindgen]
 impl ExpectimaxPlayer {
@@ -35,8 +53,16 @@ impl ExpectimaxPlayer {
     pub fn analyze(&self, json: &str) -> Result<String, String> {
         let request: Request = serde_json::from_str(json).map_err(|e| e.to_string())?;
         let history: Vec<_> = self.history.values().cloned().collect();
-        let report = analyze(&request.view, &history, request.config, self.offered_turn)
-            .map_err(|e| e.to_string())?;
+        let report = match &request.search {
+            Some(search) => {
+                let started = now_ms();
+                crate::v2::analyze(&request.view, &history, search, self.offered_turn, &|| {
+                    now_ms() - started
+                })
+            }
+            None => analyze(&request.view, &history, request.config, self.offered_turn),
+        }
+        .map_err(|e| e.to_string())?;
         serde_json::to_string(&report).map_err(|e| e.to_string())
     }
 }

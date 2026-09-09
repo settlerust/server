@@ -32,6 +32,12 @@ impl Policy for TradingPolicy {
     fn on_event(&mut self, event: &PublicEvent) {
         self.inner.on_event(event);
     }
+    fn on_batch(&mut self, batch: &settlers_protocol::EventBatch) {
+        self.inner.on_batch(batch);
+    }
+    fn committed(&mut self, command: &Command, view: &GameView) {
+        self.inner.committed(command, view);
+    }
     fn choose(&mut self, view: &GameView) -> Option<Command> {
         let next = self.inner.choose(view);
         let Some(o) = &view.game else {

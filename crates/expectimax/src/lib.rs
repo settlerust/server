@@ -4,6 +4,7 @@ pub mod leaf;
 mod sampling;
 mod search;
 mod trades;
+pub mod v2;
 mod wasm;
-pub use search::{Candidate, Config, Report, SearchError, analyze};
+pub use search::{Candidate, Config, Contributions, Report, SearchError, Statistics, analyze};
 pub use wasm::ExpectimaxPlayer;

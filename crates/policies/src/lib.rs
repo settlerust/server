@@ -1,5 +1,6 @@
 //! Fair heuristic baselines. Every policy consumes the same redacted view as a remote player.
 pub mod eta_builder;
+pub mod expectimax;
 pub mod fast_builder;
 mod planning;
 pub mod trading;
@@ -10,6 +11,12 @@ pub trait Policy: Send {
     fn name(&self) -> &'static str;
     fn choose_action(&mut self, observation: &Observation) -> Option<Action>;
     fn on_event(&mut self, _event: &PublicEvent) {}
+    /// A delivered event batch with its sequence; the default forwards each event.
+    fn on_batch(&mut self, batch: &EventBatch) {
+        for event in &batch.events {
+            self.on_event(event);
+        }
+    }
     fn accept_trade(&mut self, observation: &Observation, offer: &TradeOffer) -> bool {
         let Some(own) = observation.own else {
             return false;
@@ -27,6 +34,8 @@ pub trait Policy: Send {
     fn conversation(&mut self, _observation: &Observation) -> Option<Communication> {
         None
     }
+    /// The server accepted a command chosen by this policy.
+    fn committed(&mut self, _command: &Command, _view: &GameView) {}
     fn choose(&mut self, view: &GameView) -> Option<Command> {
         let observation = view.game.as_ref()?;
         let seat = observation.seat?;

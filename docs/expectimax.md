@@ -163,6 +163,111 @@ among explored leaves, not guarantees across every possible future. The reported
 principal variation is a representative continuation, not a complete contingent
 plan.
 
+## The tunable search: `expectimax-v2`
+
+`settlers_expectimax::v2::analyze(&view, &history, &config, offered_turn, &clock)`
+is a second search in the same crate. It keeps the reference's inputs, resource
+knowledge, hidden-world sampling, trade enumeration, and report shape, and
+replaces the search and the leaf. The reference is unchanged and remains the
+frozen comparator; a report from the tunable search carries `policy:
+"expectimax-v2"` and echoes its `search` configuration.
+
+### Search
+
+A level is one of the root player's turns. Within a level the search enumerates
+the distinct end-of-turn positions reachable by action sequences (afterstates),
+deduplicating transpositions by the player's information set and branching
+exactly over purchases, thefts, and the player's own roll. Candidate actions per
+position are builds, development plays, purchases, roads that shorten the path to
+a reachable site or extend a contested longest road, bank exchanges that reduce a
+build deficit, and ending the turn. Discards enumerate every legal multiset and
+keep the four that best preserve build targets.
+
+Between levels, every other seat plays a fixed builder policy on its sampled hand
+under common random scenarios: stratified dice for the first rolls of the round,
+then a private stream for further rolls, thefts, and draws. The same scenarios
+apply to every afterstate and every root candidate, so comparisons are paired.
+At each inner level the `beam` best first actions by static value are expanded.
+Leaves are evaluated at the end of the deepest planned turn.
+
+Iterative deepening runs depth 1, 2, and so on up to `depth`, and plays the
+deepest depth that completed within `time_budget_ms` and `node_budget`. A depth
+is abandoned as soon as either budget runs out; deepening also stops early when
+the elapsed time exceeds 30% of the budget, because the next depth costs several
+times more. With `time_budget_ms: 0` only the node budget applies and reports are
+reproducible bit for bit.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `depth` | 2 | Cap on planned own turns (1–6) |
+| `time_budget_ms` | 0 | Wall-clock limit; 0 disables the clock |
+| `node_budget` | 400000 | Engine transitions per analysis |
+| `samples` | 4 | Sampled hidden worlds (1–32) |
+| `scenarios` | 8 | Common random scenarios after the current turn (1–64) |
+| `inner_scenarios` | 4 | Scenarios at deeper levels |
+| `beam` | 4 | First actions expanded per inner turn |
+| `afterstates` | 96 | Distinct end-of-turn positions per planned turn |
+| `iterative` | true | Iterative deepening; false searches only `depth` |
+| `weights` | see below | Leaf weights |
+| `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
+
+### Leaf
+
+Points, cards, and production share one currency. A card is worth `card_value`
+heuristic points; production is worth its expected cards over the rolls that
+remain, estimated from `turns_per_player` and the current turn. The terms are:
+
+| Term | Rule |
+| --- | --- |
+| `points` | Own victory points × `point` |
+| `hand` | Cards held × `card_value` × `hand_discount` |
+| `production` | Σ rate × `resource_value` × `card_value` × remaining rolls |
+| `plan` | Best target (city, settlement plus roads, development) valued at its gain divided by one plus the turns until affordable at current production, × `readiness` |
+| `expansion` | Best reachable site's production-equivalent × `expansion` plus `expansion_sites` per other site |
+| `diversity` | Share of resource types produced at a useful rate × `diversity` |
+| `development` | Held non-victory cards × `development` plus knights played × `knight` |
+| `road` | Longest trail × `road_length`, plus half of `road_contention` when within one road of the award |
+| `hand_risk` | Expected cards lost to a seven before the next turn × card value × `hand_risk` |
+| `ports` | Matched 2:1 production × `port_match` and a flat `port_generic` |
+| `opponent_progress` | Highest opponent score × `opponent_max_point` plus all opponents' scores × `opponent_sum_point` |
+| `opponent_production` | Highest opponent production × `opponent_production` |
+| `terminal` | ± `terminal` at a finished game |
+
+`Inclinations` are five sliders: `aggression` scales the opponent terms, `risk`
+scales the discard exposure inversely, `development` scales development-card
+terms, `expansion` scales site and road terms, and `trade` sets the margin a
+proposal or acceptance must beat the plain alternative by (24 points at 0, none
+at 1) and scales the reference willingness model. A slider at 0.5 leaves the
+weights unchanged; 0 halves and 1 multiplies by 1.5.
+
+Contributions in a report are the mass-weighted sums of these terms across the
+expanded continuations. The reported `statistics` include transitions, leaves,
+afterstates per level, expansions, transpositions, scenarios, the depth completed,
+and elapsed milliseconds.
+
+### Offline engine arena
+
+`crates/arena` plays complete games between seat policies without a server or
+network. Every seat receives `observe(&state, Some(seat))` and the participant
+event batches it would see, including theft receipts only for thief and victim.
+Games take an explicit seed, so lineups can be compared on identical boards, and
+`tournament` rotates a lineup through every seat for each seed:
+
+```sh
+cargo run --release -p settlers-arena --bin tournament -- \
+  --seat 'v2:{"depth":3,"time_budget_ms":800}' --seat eta --seat fast --seat eta \
+  --seeds 0-63 --threads 32 --out games.jsonl --trace
+```
+
+Seat specs are `fast`, `eta`, `legal`, `v1`, `v2`, or `v1:{json}` and
+`v2:{json}` with a configuration object. Output is one JSON line per game with
+the winner, per-seat points, builds, trades, discards, decision timing, and search
+effort; `--trace` adds each search seat's top candidates per decision. Player
+trades are resolved by asking each recipient in seat order; the first acceptance
+commits. This arena is a development and diagnostic tier. It is not the
+authoritative protocol arena, and results from it are labelled as engine-arena
+evidence in the research repository.
+
 ## Browser and model integration
 
 Build with the pinned WASM packager from this repository:
@@ -181,7 +286,9 @@ uses a module asset URL inside each seated Web Worker.
 
 The exported `ExpectimaxPlayer` accepts `on_events(batch_json)`,
 `analyze(request_json)`, and `offered(turn)`. Its analysis request is
-`{"view": ..., "config": ...}`. Event batches are keyed by sequence, making
+`{"view": ..., "config": ...}` for the reference search, or
+`{"view": ..., "search": {...}}` for the tunable search, whose `time_budget_ms`
+uses the browser clock. Event batches are keyed by sequence, making
 replay and out-of-order delivery safe. Each worker maintains its own instance;
 the WASM interface neither performs network requests nor receives an API key.
 

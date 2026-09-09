@@ -1,11 +1,15 @@
 use settlers_client::{Client, ClientError, Command, ErrorCode, ServerFrame};
+use settlers_policies::expectimax::ExpectimaxSeat;
 use settlers_policies::trading::TradingPolicy;
 use settlers_policies::{Policy, eta_builder::EtaBuilder, fast_builder::FastBuilder};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     if args.len() != 6 {
-        return Err("usage: remote BASE_URL GAME_ID fast|eta TOKEN_FILE PLAYER_NAME".into());
+        return Err(
+            "usage: remote BASE_URL GAME_ID fast|eta|v1|v2|v1:{json}|v2:{json} TOKEN_FILE PLAYER_NAME"
+                .into(),
+        );
     }
     let base = &args[1];
     let id = &args[2];
@@ -29,15 +33,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => return Err(e.into()),
     };
-    let policy: Box<dyn Policy> = match args[3].as_str() {
-        "fast" => Box::new(FastBuilder),
-        "eta" => Box::new(EtaBuilder),
-        _ => return Err("policy must be fast or eta".into()),
-    };
     let human = std::env::var("SETTLERS_HUMAN_SEAT")
         .ok()
         .and_then(|v| v.parse::<u8>().ok());
-    let mut policy = TradingPolicy::new(policy).with_preferred_partner(human);
+    let mut policy: Box<dyn Policy> = match args[3].as_str() {
+        "fast" => Box::new(TradingPolicy::new(Box::new(FastBuilder)).with_preferred_partner(human)),
+        "eta" => Box::new(TradingPolicy::new(Box::new(EtaBuilder)).with_preferred_partner(human)),
+        spec => Box::new(ExpectimaxSeat::parse(spec)?),
+    };
     let move_delay = std::env::var("SETTLERS_MOVE_DELAY_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -91,6 +94,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     break;
                                 }
                             };
+                            if game.game.is_none()
+                                && game.members.iter().any(|m| {
+                                    m.is_you && m.seat.is_some() && m.connected && !m.ready
+                                })
+                            {
+                                match client
+                                    .command(id, game.version, Command::SetReady { ready: true })
+                                    .await
+                                {
+                                    Ok(_) => {}
+                                    Err(ClientError::Server(e))
+                                        if e.code == ErrorCode::Conflict => {}
+                                    Err(error) => return Err(error.into()),
+                                }
+                                continue;
+                            }
                             if game.game.as_ref().is_some_and(|o| {
                                 matches!(o.phase, settlers_client::Phase::Finished { .. })
                             }) {
@@ -119,10 +138,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             };
                             if let Some(command) = policy.choose(&game) {
                                 let offering = matches!(command, Command::OfferTrade { .. });
-                                let request = Client::prepare(game.version, command);
+                                let request = Client::prepare(game.version, command.clone());
                                 let mut result = client.submit(id, &request).await;
-                                if matches!(result, Err(ClientError::Http(_))) {
+                                // Storage pauses and ambiguous transport failures retry the same
+                                // envelope; a fresh decision would lose idempotency after a commit.
+                                for attempt in 0..20 {
+                                    if !matches!(
+                                        &result,
+                                        Err(ClientError::Http(_))
+                                            | Err(ClientError::Server(settlers_client::ApiError {
+                                                code: ErrorCode::Backpressure
+                                                    | ErrorCode::StorageUnavailable,
+                                                ..
+                                            }))
+                                    ) {
+                                        break;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(
+                                        (100 * (attempt + 1)).min(1000),
+                                    ))
+                                    .await;
                                     result = client.submit(id, &request).await;
+                                }
+                                if result.is_ok() {
+                                    policy.committed(&command, &game);
                                 }
                                 if let Err(error) = result {
                                     eprintln!("{error}");
@@ -140,11 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
-                        ServerFrame::Events { batch } => {
-                            for event in batch.events {
-                                policy.on_event(&event);
-                            }
-                        }
+                        ServerFrame::Events { batch } => policy.on_batch(&batch),
                         _ => {}
                     }
                 }

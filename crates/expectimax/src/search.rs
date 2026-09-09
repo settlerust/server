@@ -62,6 +62,29 @@ pub struct TradeAnalysis {
     pub partner_affordability: f64,
     pub unlocked_actions: Vec<Action>,
 }
+/// Named additive terms whose sum is the candidate value.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Contributions(pub BTreeMap<String, f64>);
+impl Contributions {
+    pub fn total(&self) -> f64 {
+        self.0.values().sum()
+    }
+}
+impl From<Features> for Contributions {
+    fn from(f: Features) -> Self {
+        let value = serde_json::to_value(f).unwrap_or_default();
+        Self(
+            value
+                .as_object()
+                .map(|m| {
+                    m.iter()
+                        .filter_map(|(k, v)| v.as_f64().map(|v| (k.clone(), v)))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        )
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Candidate {
     pub id: String,
@@ -69,11 +92,12 @@ pub struct Candidate {
     pub expected_value: f64,
     pub minimum_leaf_value: f64,
     pub maximum_leaf_value: f64,
-    pub contributions: Features,
+    pub contributions: Contributions,
     pub trade: Option<TradeAnalysis>,
     pub principal_variation: Vec<Action>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Statistics {
     pub decision_nodes: u64,
     pub chance_branches: u64,
@@ -82,6 +106,20 @@ pub struct Statistics {
     pub minimum_leaf_turn: Option<u32>,
     pub maximum_leaf_turn: u32,
     pub terminal_leaves: u64,
+    // v2 counters; zero for the reference search.
+    pub transitions: u64,
+    pub afterstates: u64,
+    pub expanded: u64,
+    pub transpositions: u64,
+    pub scenarios: u64,
+    pub own_nodes: u64,
+    pub depth_completed: u32,
+    pub time_ms: f64,
+    pub aborted: bool,
+    pub per_level_afterstates: Vec<u64>,
+    pub per_level_nodes: Vec<u64>,
+    pub root_actions: u32,
+    pub legal_actions: u32,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
@@ -89,6 +127,8 @@ pub struct Report {
     pub version: u64,
     pub seat: u8,
     pub config: Config,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<crate::v2::SearchConfig>,
     pub horizon_turn: u32,
     pub observation: Observation,
     pub offers: Vec<TradeOffer>,
@@ -281,7 +321,7 @@ pub fn analyze(
             expected_value: value.features.total(),
             minimum_leaf_value: value.min,
             maximum_leaf_value: value.max,
-            contributions: value.features,
+            contributions: Contributions::from(value.features),
             trade,
             principal_variation: line.into_iter().take(10).collect(),
         });
@@ -294,7 +334,7 @@ pub fn analyze(
             expected_value: wait.features.total(),
             minimum_leaf_value: wait.min,
             maximum_leaf_value: wait.max,
-            contributions: wait.features,
+            contributions: Contributions::from(wait.features),
             trade: None,
             principal_variation: wait.line,
         });
@@ -306,7 +346,7 @@ pub fn analyze(
     });
     let top_ids = candidates.iter().take(3).map(|c| c.id.clone()).collect();
     Ok(Report {
-        policy: "expectimax-v1".into(), version: view.version, seat, config, horizon_turn: horizon,
+        policy: "expectimax-v1".into(), version: view.version, seat, config, search: None, horizon_turn: horizon,
         observation: o.clone(), offers: view.offers.clone(),
         knowledge, candidates, top_ids, statistics: search.stats,
         assumptions: vec![

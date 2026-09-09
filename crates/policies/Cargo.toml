@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 settlers-engine.workspace = true
 settlers-protocol.workspace = true
+settlers-expectimax = { path = "../expectimax" }
 serde_json.workspace = true
 
 settlers-client = { path = "../../clients/rust" }

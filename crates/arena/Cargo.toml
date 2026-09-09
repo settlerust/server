@@ -1,0 +1,16 @@
+[package]
+name = "settlers-arena"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+settlers-engine.workspace = true
+settlers-protocol.workspace = true
+settlers-expectimax = { path = "../expectimax" }
+settlers-policies = { path = "../policies" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
