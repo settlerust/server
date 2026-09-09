@@ -63,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut depths: Vec<u8> = vec![1, 2, 3];
     let mut time_budget = 0.0;
     let mut out: Option<String> = None;
+    let mut views: Option<String> = None;
     let mut threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let mut i = 0;
     while i < args.len() {
@@ -82,9 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--time" => time_budget = value.parse()?,
             "--threads" => threads = value.parse()?,
             "--out" => out = Some(value),
+            "--views" => views = Some(value),
             _ => {
                 eprintln!(
-                    "usage: structure --seeds A-B [--every N] [--depths 1,2,3] [--time MS] [--threads N] --out FILE"
+                    "usage: structure --seeds A-B [--every N] [--depths 1,2,3] [--time MS] [--threads N] --out FILE [--views FILE]"
                 );
                 std::process::exit(2)
             }
@@ -95,6 +97,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => Box::new(std::io::BufWriter::new(std::fs::File::create(path)?)),
         None => Box::new(std::io::stdout()),
     });
+    // Sampled main-phase views with the seat's own history, for external (browser) timing.
+    let view_writer: Option<Mutex<std::io::BufWriter<std::fs::File>>> = match &views {
+        Some(path) => Some(Mutex::new(std::io::BufWriter::new(std::fs::File::create(
+            path,
+        )?))),
+        None => None,
+    };
     let next = AtomicUsize::new(0);
     let jobs: Vec<u32> = (seeds.0..=seeds.1).collect();
     std::thread::scope(|scope| {
@@ -128,6 +137,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             "seat": p, "legal_actions": legal, "hand": o.own.map(|h| h.resources.total()),
                         }));
                         if decision.is_multiple_of(every) && s.turn > 0 && legal > 1 {
+                            if let Some(w) = &view_writer
+                                && s.phase == Phase::Main
+                            {
+                                let line = serde_json::json!({
+                                    "seed": seed, "turn": s.turn, "seat": p,
+                                    "view": v, "history": histories[p as usize],
+                                });
+                                writeln!(w.lock().unwrap(), "{line}").unwrap();
+                            }
                             for &depth in &depths {
                                 let config = SearchConfig { depth, time_budget_ms: time_budget, iterative: false, ..SearchConfig::default() };
                                 let started = std::time::Instant::now();
