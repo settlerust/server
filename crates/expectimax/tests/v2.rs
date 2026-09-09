@@ -216,13 +216,25 @@ fn learned_tables_seat_the_search_and_rank_true_states() {
             assert_eq!(report.policy, "expectimax-v2-tables");
             for c in &report.candidates {
                 assert!((c.contributions.total() - c.expected_value).abs() < 1e-6);
-                assert!(c.contributions.0.contains_key("tables") || c.contributions.0.contains_key("terminal") || c.contributions.0.contains_key("expected"));
+                assert!(
+                    c.contributions.0.contains_key("tables")
+                        || c.contributions.0.contains_key("terminal")
+                        || c.contributions.0.contains_key("expected")
+                );
             }
             let ranked = rank_state(&state, actor, &config, &leaf, 1).unwrap();
             assert!(!ranked.is_empty());
-            assert!(ranked.iter().all(|(a, v)| v.is_finite() && apply(&state, actor, *a).is_ok()));
+            assert!(
+                ranked
+                    .iter()
+                    .all(|(a, v)| v.is_finite() && apply(&state, actor, *a).is_ok())
+            );
             ranked_decisions += 1;
-            match act(&state, actor, &report.candidates[0].command.clone().unwrap()) {
+            match act(
+                &state,
+                actor,
+                &report.candidates[0].command.clone().unwrap(),
+            ) {
                 Some(a) => a,
                 None => continue,
             }
@@ -231,7 +243,12 @@ fn learned_tables_seat_the_search_and_rank_true_states() {
         };
         state = match apply(&state, actor, action) {
             Ok(next) => next,
-            Err(_) => apply(&state, actor, *legal_actions(&state, actor).first().unwrap()).unwrap(),
+            Err(_) => apply(
+                &state,
+                actor,
+                *legal_actions(&state, actor).first().unwrap(),
+            )
+            .unwrap(),
         };
     }
     assert!(ranked_decisions >= 3);
@@ -244,5 +261,9 @@ fn learned_tables_seat_the_search_and_rank_true_states() {
         ..SearchConfig::default()
     };
     assert!(Leaf::from_config(&missing).is_err());
-    assert!(Leaf::from_config(&SearchConfig::default()).unwrap().is_hand());
+    assert!(
+        Leaf::from_config(&SearchConfig::default())
+            .unwrap()
+            .is_hand()
+    );
 }

@@ -315,12 +315,19 @@ mod tests {
     }
     #[test]
     fn layouts_size_as_documented() {
-        let full = Layout::parse("hex,vertex,portfolio").unwrap();
+        let full = Layout::parse("hex,vertex,corner,portfolio").unwrap();
         assert_eq!(full.active_count(), MAX_ACTIVE);
+        assert_eq!(
+            Layout::parse("hex,vertex,portfolio")
+                .unwrap()
+                .active_count(),
+            78
+        );
         assert_eq!(
             full.total_entries(),
             features::HEX_PATTERNS
                 + features::VERTEX_PATTERNS
+                + features::CORNER_PATTERNS
                 + features::PRODUCTION_PATTERNS
                 + features::HAND_PATTERNS
                 + features::RACE_PATTERNS
@@ -335,7 +342,13 @@ mod tests {
     #[test]
     fn features_are_distinct_and_in_range_for_every_seat() {
         let s = fixture();
-        for spec in ["hex,vertex,portfolio", "hex", "vertex", "portfolio"] {
+        for spec in [
+            "hex,vertex,corner,portfolio",
+            "hex",
+            "vertex",
+            "corner",
+            "portfolio",
+        ] {
             let layout = Layout::parse(spec).unwrap();
             let model = Model::new(layout, 0.5, false);
             let mut out = [0u32; MAX_ACTIVE];

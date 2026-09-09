@@ -17,6 +17,8 @@ pub const HEX_PATTERNS: usize = 15_625 * 6 * 6 * 2;
 /// Three touching hexes (36 resource-pip codes, plus the sea), times six building states,
 /// four road-adjacency states, and seven port kinds.
 pub const VERTEX_PATTERNS: usize = 37 * 37 * 37 * 6 * 4 * 7;
+/// The compact intersection window: the three touching hexes and the building state only.
+pub const CORNER_PATTERNS: usize = 37 * 37 * 37 * 6;
 /// Production pips per resource, each capped at 15.
 pub const PRODUCTION_PATTERNS: usize = 16 * 16 * 16 * 16 * 16;
 /// Hand per resource capped at 4, hand total capped at 8, settlements and cities left.
@@ -30,9 +32,10 @@ pub const OPPONENT_PATTERNS: usize = 10 * 32 * 3 * 32 * 13;
 
 pub const HEX_COUNT: usize = 19;
 pub const VERTEX_COUNT: usize = 54;
+pub const CORNER_COUNT: usize = 54;
 pub const PORTFOLIO_COUNT: usize = 5;
 /// Upper bound on active entries per position.
-pub const MAX_ACTIVE: usize = HEX_COUNT + VERTEX_COUNT + PORTFOLIO_COUNT;
+pub const MAX_ACTIVE: usize = HEX_COUNT + VERTEX_COUNT + CORNER_COUNT + PORTFOLIO_COUNT;
 
 fn pips(number: u8) -> usize {
     if (2..=12).contains(&number) && number != 7 {
@@ -101,8 +104,8 @@ pub fn hex_pattern(s: &State, seat: u8, h: u8) -> usize {
     let robber = usize::from(s.robber == h);
     ((canonical_corners(&corners) * 6 + resource) * 6 + pips(s.layout.number(h))) * 2 + robber
 }
-/// One vertex pattern.
-pub fn vertex_pattern(s: &State, seat: u8, v: u8, port: u8) -> usize {
+/// The sorted triple of touching hexes and the building state at a vertex.
+fn corner_parts(s: &State, seat: u8, v: u8) -> (usize, usize) {
     let t = topology();
     let mut codes = [36usize; 3];
     for (i, &h) in t.incident_hexes[v as usize].iter().take(3).enumerate() {
@@ -136,6 +139,17 @@ pub fn vertex_pattern(s: &State, seat: u8, v: u8, port: u8) -> usize {
             }
         }
     };
+    (hexes, building)
+}
+/// One compact corner pattern: hexes and building state only.
+pub fn corner_pattern(s: &State, seat: u8, v: u8) -> usize {
+    let (hexes, building) = corner_parts(s, seat, v);
+    hexes * 6 + building
+}
+/// One vertex pattern.
+pub fn vertex_pattern(s: &State, seat: u8, v: u8, port: u8) -> usize {
+    let t = topology();
+    let (hexes, building) = corner_parts(s, seat, v);
     let mut roads = 0usize;
     for &e in &t.incident_edges[v as usize] {
         match s.board.road(e) {
@@ -263,25 +277,28 @@ fn opponent_pattern(s: &State, seat: u8, own_pips: usize) -> usize {
 pub struct Layout {
     pub hex: bool,
     pub vertex: bool,
+    pub corner: bool,
     pub portfolio: bool,
 }
 impl Layout {
-    /// Parse a comma-separated list of `hex`, `vertex`, and `portfolio`.
+    /// Parse a comma-separated list of `hex`, `vertex`, `corner`, and `portfolio`.
     pub fn parse(spec: &str) -> Result<Self, String> {
         let mut layout = Self {
             hex: false,
             vertex: false,
+            corner: false,
             portfolio: false,
         };
         for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             match item {
                 "hex" => layout.hex = true,
                 "vertex" => layout.vertex = true,
+                "corner" => layout.corner = true,
                 "portfolio" => layout.portfolio = true,
                 other => return Err(format!("unknown layout family {other:?}")),
             }
         }
-        if !(layout.hex || layout.vertex || layout.portfolio) {
+        if !(layout.hex || layout.vertex || layout.corner || layout.portfolio) {
             return Err("layout names no tuple family".into());
         }
         Ok(layout)
@@ -293,6 +310,9 @@ impl Layout {
         }
         if self.vertex {
             parts.push("vertex");
+        }
+        if self.corner {
+            parts.push("corner");
         }
         if self.portfolio {
             parts.push("portfolio");
@@ -307,6 +327,9 @@ impl Layout {
         }
         if self.vertex {
             out.push(("vertex", 1, VERTEX_PATTERNS));
+        }
+        if self.corner {
+            out.push(("corner", 1, CORNER_PATTERNS));
         }
         if self.portfolio {
             out.push(("production", 1, PRODUCTION_PATTERNS));
@@ -324,6 +347,7 @@ impl Layout {
     pub fn active_count(&self) -> usize {
         usize::from(self.hex) * HEX_COUNT
             + usize::from(self.vertex) * VERTEX_COUNT
+            + usize::from(self.corner) * CORNER_COUNT
             + usize::from(self.portfolio) * PORTFOLIO_COUNT
     }
 }
@@ -334,6 +358,7 @@ impl Layout {
 pub struct Offsets {
     pub hex: Option<usize>,
     pub vertex: Option<usize>,
+    pub corner: Option<usize>,
     pub portfolio: Option<[usize; PORTFOLIO_COUNT]>,
 }
 impl Offsets {
@@ -347,6 +372,11 @@ impl Offsets {
         let vertex = layout.vertex.then(|| {
             let at = cursor;
             cursor += VERTEX_PATTERNS;
+            at
+        });
+        let corner = layout.corner.then(|| {
+            let at = cursor;
+            cursor += CORNER_PATTERNS;
             at
         });
         let portfolio = layout.portfolio.then(|| {
@@ -367,6 +397,7 @@ impl Offsets {
         Self {
             hex,
             vertex,
+            corner,
             portfolio,
         }
     }
@@ -386,6 +417,12 @@ pub fn features(layout: &Layout, off: &Offsets, s: &State, seat: u8, out: &mut [
         let ports = ports(s);
         for v in 0..54u8 {
             out[n] = (base + vertex_pattern(s, seat, v, ports[v as usize])) as u32;
+            n += 1;
+        }
+    }
+    if let Some(base) = off.corner {
+        for v in 0..54u8 {
+            out[n] = (base + corner_pattern(s, seat, v)) as u32;
             n += 1;
         }
     }

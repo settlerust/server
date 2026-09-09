@@ -653,7 +653,7 @@ fn main() -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
         let mut a = existing;
-        let mut b = config_value.clone();
+        let mut b = config_value;
         for key in ["threads", "games", "wall_seconds"] {
             a[key] = serde_json::Value::Null;
             b[key] = serde_json::Value::Null;
