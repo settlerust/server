@@ -66,6 +66,16 @@ cargo run --release -p settlers-engine --bin bench
 cargo run --release -p settlers-policies --bin simulate -- 100
 ```
 
+```sh
+cargo run --release -p settlers-arena --bin tournament -- --seat v2 --seat eta --seat fast --seat eta --seeds 0-15
+cargo run --release -p settlers-arena --bin structure -- --seeds 0-7 --depths 1,2,3 --out structure.jsonl
+```
+
+`tournament` plays paired-seed games between seat policies on every core and
+prints per-slot win rates; `structure` samples positions from builder games and
+records legal-action widths and the tunable search's afterstates, transitions,
+and time by depth. Both are documented in [expectimax.md](expectimax.md#offline-engine-arena).
+
 `bench` reports board/state sizes, a deterministic roll transition, and packed versus byte-array edge reads. The transition fixture is small and must not be treated as a bound on longest-road recomputation or a full expectimax workload. `simulate` includes legal-action/view construction and policies. `arena` measures a different path involving HTTP and durable storage.
 
 Use the vendored [Rust skill](../.agents/skills/rust-best-practices/SKILL.md) and [AGENTS.md](../AGENTS.md). Pure rule changes need focused regression tests; representation changes need equivalence tests and workload benchmarks. Protocol and persistence changes need replay/visibility checks before performance tuning.

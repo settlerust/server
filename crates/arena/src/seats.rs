@@ -39,6 +39,12 @@ fn summarize(report: &settlers_expectimax::Report) -> serde_json::Value {
     serde_json::json!({
         "phase": o.phase,
         "hand": o.own.map(|p| p.resources),
+        "position": {
+            "version": report.version, "turn": o.turn, "current": o.current, "phase": o.phase,
+            "hexes": o.hexes, "ports": o.ports, "buildings": o.buildings, "roads": o.roads,
+            "robber": o.robber, "players": o.players, "bank": o.bank.0, "deck_count": o.deck_count,
+            "longest_road": o.longest_road, "largest_army": o.largest_army,
+        },
         "legal": o.legal_actions.len(),
         "depth": report.statistics.depth_completed,
         "transitions": report.statistics.transitions,
