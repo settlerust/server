@@ -44,6 +44,9 @@ pub struct SearchConfig {
     pub counts_only: bool,
     pub leaf_opponents: bool,
     pub propose: bool,
+    /// Scale the willingness model per partner by that partner's observed acceptance rate of
+    /// this seat's offers (Laplace-smoothed from the public trade record).
+    pub reciprocity: bool,
 }
 impl Default for SearchConfig {
     fn default() -> Self {
@@ -63,6 +66,7 @@ impl Default for SearchConfig {
             counts_only: false,
             leaf_opponents: false,
             propose: true,
+            reciprocity: false,
         }
     }
 }
@@ -143,6 +147,11 @@ pub fn analyze(
         })
         .collect();
     let weights = config.inclinations.apply(config.weights);
+    let partner_factor = if config.reciprocity {
+        reciprocity(history, seat)
+    } else {
+        [1.0; 4]
+    };
     let margin = config.inclinations.trade_margin();
     let mut decisions = trades::candidates(view, &knowledge, offered_turn);
     if !config.propose {
@@ -210,9 +219,14 @@ pub fn analyze(
                     let mut accepted = Vec::new();
                     let mut affordable = 0.0;
                     let mut unlocked = Vec::new();
+                    let partner = match d.action {
+                        Action::Trade { other, .. } => other as usize,
+                        _ => 0,
+                    };
                     for w in &worlds {
                         let prob = trades::acceptance(&w.state, seat, d.action)
-                            * (0.5 + config.inclinations.trade);
+                            * (0.5 + config.inclinations.trade)
+                            * partner_factor[partner];
                         if let Ok(after) = apply(&w.state, seat, d.action) {
                             affordable += w.weight;
                             for a in trades::unlocked(&w.state, &after, seat) {
@@ -392,6 +406,51 @@ pub fn analyze(
             "Contributions are additive weighted heuristic terms, not win probabilities.".into(),
         ],
     })
+}
+/// Per-partner multipliers on modeled willingness from this seat's own offer record:
+/// `2 * (accepted + 1) / (closed + 2)`, so a partner with no history is unchanged and one
+/// who accepted every offer doubles the model's willingness (capped at 1 downstream).
+pub fn reciprocity(history: &[EventBatch], seat: u8) -> [f64; 4] {
+    use settlers_protocol::{PublicEvent, TradeCloseReason};
+    let mut offers: std::collections::BTreeMap<String, Vec<u8>> = std::collections::BTreeMap::new();
+    let mut closed = [0u32; 4];
+    let mut accepted = [0u32; 4];
+    for batch in history {
+        for event in &batch.events {
+            match event {
+                PublicEvent::TradeOffered { offer } if offer.from == seat => {
+                    offers.insert(offer.id.clone(), offer.to.clone());
+                }
+                PublicEvent::TradeClosed {
+                    offer_id,
+                    reason,
+                    winner,
+                } => {
+                    if let Some(to) = offers.remove(offer_id) {
+                        if matches!(
+                            reason,
+                            TradeCloseReason::Cancelled | TradeCloseReason::Replaced
+                        ) {
+                            continue;
+                        }
+                        for r in to {
+                            if (r as usize) < 4 {
+                                closed[r as usize] += 1;
+                            }
+                        }
+                        if *reason == TradeCloseReason::Accepted
+                            && let Some(w) = winner
+                            && (*w as usize) < 4
+                        {
+                            accepted[*w as usize] += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    std::array::from_fn(|q| 2.0 * f64::from(accepted[q] + 1) / f64::from(closed[q] + 2))
 }
 fn normalize(mut worlds: Vec<World>) -> Vec<World> {
     let mass: f64 = worlds.iter().map(|w| w.weight).sum();

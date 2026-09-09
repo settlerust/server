@@ -145,3 +145,42 @@ fn discard_choices_cover_more_than_the_automatic_suggestion() {
         assert_eq!(resources.total(), 5);
     }
 }
+
+#[test]
+fn reciprocity_scales_willingness_by_observed_acceptances() {
+    use settlers_protocol::{EventBatch, OfferStatus, PublicEvent, TradeCloseReason, TradeOffer};
+    let offer = |id: &str, to: Vec<u8>| PublicEvent::TradeOffered {
+        offer: TradeOffer {
+            id: id.into(),
+            from: 0,
+            to,
+            give: Resources::one(Resource::Brick, 1),
+            receive: Resources::one(Resource::Ore, 1),
+            message: None,
+            status: OfferStatus::Open,
+            declined: vec![],
+        },
+    };
+    let closed =
+        |id: &str, reason: TradeCloseReason, winner: Option<u8>| PublicEvent::TradeClosed {
+            offer_id: id.into(),
+            reason,
+            winner,
+        };
+    let history = vec![EventBatch {
+        sequence: 1,
+        timestamp_ms: 0,
+        events: vec![
+            offer("a", vec![1, 2]),
+            closed("a", TradeCloseReason::Accepted, Some(1)),
+            offer("b", vec![1, 2]),
+            closed("b", TradeCloseReason::Declined, None),
+            offer("c", vec![2]),
+            closed("c", TradeCloseReason::Cancelled, None),
+        ],
+    }];
+    let factor = settlers_expectimax::v2::reciprocity(&history, 0);
+    assert!((factor[1] - 2.0 * 2.0 / 4.0).abs() < 1e-9);
+    assert!((factor[2] - 2.0 * 1.0 / 4.0).abs() < 1e-9);
+    assert!((factor[3] - 1.0).abs() < 1e-9);
+}
