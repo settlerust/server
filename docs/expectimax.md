@@ -251,6 +251,15 @@ expanded continuations. The reported `statistics` include transitions, leaves,
 afterstates per level, expansions, transpositions, scenarios, the depth completed,
 and elapsed milliseconds.
 
+### Browser defaults
+
+Seated browser workers request the tunable search with a depth cap of 3, a
+one-second budget, four sampled worlds, eight scenarios, and five per-agent
+inclination sliders sampled from the game and agent IDs. Native cost by depth on
+sampled positions is roughly 15, 90, 465, and 1650 ms at depths 1 to 4; WASM is
+about three times slower, so a one-second budget usually completes depth 2 and
+sometimes depth 3.
+
 ### Offline engine arena
 
 `crates/arena` plays complete games between seat policies without a server or
