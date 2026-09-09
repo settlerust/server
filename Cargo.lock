@@ -2710,6 +2710,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2737,6 +2738,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "settlers-expectimax"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "settlers-engine",
+ "settlers-protocol",
+ "thiserror",
+ "wasm-bindgen",
 ]
 
 [[package]]

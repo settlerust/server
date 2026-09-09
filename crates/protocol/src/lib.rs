@@ -1,6 +1,7 @@
 //! Version 1 shared REST and WebSocket DTOs. No authoritative hidden state belongs here.
 mod command;
 mod event;
+pub mod knowledge;
 mod view;
 pub use command::*;
 pub use event::*;

@@ -94,6 +94,24 @@ pub(super) async fn command(
         app.games.execute(&id, identity, request, now_ms()).await?,
     ))
 }
+pub(super) async fn admission(
+    State(app): State<App>,
+    Extension(identity): Extension<Identity>,
+    Path(id): Path<String>,
+    grant: Option<Extension<crate::managed_auth::Grant>>,
+    ApiJson(request): ApiJson<AdmissionUpdate>,
+) -> Result<Json<serde_json::Value>> {
+    if !grant.is_some_and(|Extension(g)| g.role == crate::managed_auth::Role::Host) {
+        return Err(Error::new(
+            ErrorCode::Forbidden,
+            "an external host grant is required",
+        ));
+    }
+    app.games
+        .admission(&id, identity, request, now_ms())
+        .await?;
+    Ok(Json(serde_json::json!({"updated": true})))
+}
 #[derive(Deserialize)]
 pub(super) struct ListQuery {
     after: Option<String>,

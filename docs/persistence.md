@@ -25,6 +25,32 @@ S3 objects are gzip newline-delimited JSON under `events/game_id=UUID/`. Every l
 
 Pending records bridge Firehose buffering delay in REST history. Reading the outbox before S3 avoids a prune race. Public history uses the caller projection and never exposes the private `input` field. Batches with no visible events still advance pagination.
 
+## Shared-process ownership
+
+With `SETTLERS_SERVER_ID`, DynamoDB `STATE` items contain an `owner_id` string.
+An ownership manifest item has `game_id = OWNER#<server UUID>` and
+`kind = <game UUID>`. The orchestrator must atomically update the route, state
+owner, and manifest when assigning a game. A new assignment may create an owner-only
+`STATE` placeholder; the host's idempotent create request initializes its data.
+The process queries its own manifest rather than scanning all saved games.
+
+Every state/outbox transaction also checks `owner_id`, so withdrawing ownership
+fences subsequent commits even if an old actor still has queued work. The process
+checks its manifest every 15 seconds and unloads released actors. On-demand creation
+restores existing owned state for the original host, including when a saved game
+is assigned to a process that is already serving other games. A resident-game cap
+rejects excess creation with backpressure. Ownership does not replace the
+orchestrator's requirement to stop the old process before restarting the same
+server UUID.
+
+Optional Fargate telemetry uses `game_id = SERVER#<server UUID>`, `kind = METRICS`,
+and a JSON `data` attribute. Reports include Unix-second `timestamp`, normalized
+`cpuPercent`, working-set `memoryPercent`, `loadedGames`, `commands`,
+`commandP95Ms` (a bounded histogram upper estimate), and `tickLagMs`. CPU is
+normalized to `SETTLERS_TASK_VCPU`; memory to `SETTLERS_TASK_MEMORY_MIB`.
+The telemetry worker needs DynamoDB `PutItem` on this table and reads only
+its own ECS metadata endpoint. It does not make placement decisions.
+
 ## Crash recovery
 
 At startup the server loads current snapshots, resumes archive delivery, marks old sockets disconnected, and resumes persisted deadlines. A saved JWT and signing key preserve the same seat. Lost public broadcasts are recovered by REST pagination plus a fresh private snapshot. There is no need to replay all S3 history merely to restart the server. Archive outages do not block loading durable snapshots. If a full outbox or a failed write prevents committing disconnected presence, the last committed presence remains visible until actor retries succeed; no uncommitted presence is published. One game's archive failure does not prevent delivery for other games.
@@ -63,3 +89,12 @@ ORDER BY sequence;
 ```
 
 `input_json` includes seed and private participant actions. Give research archive/Glue/Athena access only to research roles. Browser/player JWTs grant no AWS access. The server runtime IAM policy permits current-state/outbox operations, Firehose sends, and archive reads; it does not grant Athena execution or S3 deletion.
+
+Trade responses use archive transition version `base-v6`. Explicit passes persist
+in each offer, and the last rejection closes it in the same transaction. Replay
+continues to use the historical rejection behavior for `base-v1` through `base-v5`;
+the empty response list is omitted from serialization to preserve historical hashes.
+
+Archive transition version `base-v7` locks lobby readiness once the opening order
+is decided. Earlier records retain their original readiness and disconnect
+behavior during replay. No wire schema changes are required.

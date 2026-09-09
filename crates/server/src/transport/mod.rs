@@ -31,6 +31,7 @@ pub fn router(app: App) -> Router {
         .route("/v1/games/{id}/state", get(routes::game))
         .route("/v1/games/{id}/players", get(routes::players))
         .route("/v1/games/{id}/commands", post(routes::command))
+        .route("/v1/games/{id}/admission", post(routes::admission))
         .route("/v1/games/{id}/events", get(routes::history))
         .route("/v1/games/{id}/ws", get(websocket::upgrade))
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));

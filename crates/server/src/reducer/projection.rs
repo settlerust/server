@@ -39,6 +39,7 @@ pub fn view(room: &Room, subject: &str) -> Result<GameView> {
                 seat: m.seat,
                 name: m.identity.name.clone(),
                 connected: m.connected,
+                ready: m.ready,
                 is_you: m.identity.subject == subject,
             })
             .collect(),

@@ -35,7 +35,7 @@ JWT verification fixes HS256, issuer `server`, audience `settlers-v1`, and valid
 | GET | `/v1/games/{id}/events?after=0&limit=50` | `EventPage`; exclusive sequence cursor, maximum 100 batches |
 | GET | `/v1/games/{id}/ws` | authenticated WebSocket upgrade |
 
-A lobby can be inspected before joining. Once started, its state and history require player or spectator membership. The lobby list remains visible to authenticated users and includes `connected_players`, the number of currently connected seated members. Players join before start; spectators can join later. Only the host starts a full lobby.
+A lobby can be inspected before joining. Once started, its state and history require player or spectator membership. The lobby list remains visible to authenticated users and includes `connected_players`, the number of currently connected seated members. Players join before start; spectators can join later. Any seated player (or the observer host) can start when every seat is connected and ready.
 
 ```json
 {"name":"Experiment 1","settings":{"players":4,"points_to_win":10,"discard_limit":7,"turn_seconds":120},"host_as_player":false,"research":true}
@@ -59,7 +59,9 @@ Every committed input increments `version`, including presence, communication, a
 |---|---|---|
 | `join` | `name`, `spectator` (default false) | acquire a vacant seat in a standard game or observe |
 | `join_agent` | `name` | acquire an AI seat; required for research tables |
-| `start` | none | host starts a lobby with all seats occupied |
+| `set_ready` | `ready` boolean | a seated player confirms or withdraws readiness; confirming requires a live game WebSocket |
+| `roll_for_order` | none | any player or observer host rolls once all seats are ready and connected |
+| `start` | none | any player or observer host starts once all seats are ready and connected |
 | `configure` | `settings` | host updates settings before start; occupied seats must fit |
 | `act` | `action` | apply a base-game action |
 | `offer_trade` | `to`, `give`, `receive`, optional `message` | offer resources to eligible recipients |
@@ -140,3 +142,38 @@ Future randomness, unrevealed deck order, and private filters are never exposed.
 See [development.md](development.md#research-spectator-tables-and-safe-setup-corrections)
 for setup relocation and [atomic trade replacement](development.md#atomic-trade-replacement)
 for improved offers, resource revalidation, and acceptance races.
+
+
+### External admission updates
+
+`POST /v1/games/{id}/admission` accepts `AdmissionUpdate { revision, players }` only
+with an external host grant. `players` contains at most the configured seat count
+of unique identity subjects. Revisions increase monotonically; an identical retry
+is a no-op. Before start, omitted seated identities are removed atomically with
+the persisted admission record and opening order is cleared if seats changed.
+Stale player JWTs cannot rejoin a removed seat. Running games reject changes.
+Subjects and the admission list are private archive/control-plane data; ordinary
+participants receive only `admission_changed` and their redacted updated snapshot.
+
+Before the opening rolls, each player must open a game WebSocket and send `set_ready` with
+`ready: true`. Readiness appears in `members[].ready` and `ready_changed` events.
+The last socket disconnect clears that player's readiness in the lobby; another
+open tab preserves it. Changing settings clears everyone's confirmation. Remote
+AI uses the same command as humans. Archived versions before `base-v5` retain their
+original start behavior when replayed.
+
+Readiness is a lobby decision. Once `roll_for_order` commits an opening,
+`set_ready` is no longer accepted, disconnects do not reset readiness, and `start`
+does not ask players to confirm again. This also allows an existing opening to
+continue when an older server cleared a ready flag during navigation.
+
+### Trade responses and final victory cards
+
+Open trade offers include optional `declined` seat IDs for explicit passes. Each pass
+also emits `trade_rejected`. After all recipients decline, the server closes the
+offer with `trade_closed.reason = "declined"`. Private automatic filtering never
+appears in `declined`. Reloads retain explicit responses.
+
+Every public player includes `victory_cards` only after the phase is `finished`.
+This count includes both mature and newly drawn victory-point cards; it is already
+included in final `points`. Other private development cards remain hidden.

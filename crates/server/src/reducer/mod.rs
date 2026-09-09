@@ -1,4 +1,5 @@
 //! Pure room transitions: identity, trades, communication, and rule-engine adaptation.
+mod admission;
 mod discard;
 mod lobby;
 mod messaging;
@@ -51,10 +52,12 @@ pub fn create(
             },
             seat: request.host_as_player.then_some(0),
             connected: false,
+            ready: false,
             grace_turn: None,
         }],
         game: None,
         opening: None,
+        admission: None,
         offers: vec![],
         filters: [[Filter::default(); 4]; 4],
         receipts: vec![],
@@ -101,7 +104,7 @@ pub fn duplicate(
     Ok(None)
 }
 pub fn reduce(input: &Room, event: Input, now: u64) -> Result<(Room, Record)> {
-    reduce_version(input, event, now, "base-v4")
+    reduce_version(input, event, now, "base-v7")
 }
 fn reduce_version(
     input: &Room,
@@ -113,6 +116,10 @@ fn reduce_version(
     let mut room = input.clone();
     let mut public = vec![];
     match &event {
+        Input::Admission { identity, request } => {
+            admission::update(&mut room, identity, request)?;
+            public.push(PublicEvent::AdmissionChanged);
+        }
         Input::Command { identity, request } => {
             if uuid::Uuid::parse_str(&request.request_id).is_err() {
                 return Err(Error::new(
@@ -138,7 +145,7 @@ fn reduce_version(
                 &request.request_id,
                 now,
                 &mut public,
-                engine_version == "base-v4",
+                engine_version,
             )?;
             room.receipts.push(StoredReceipt {
                 subject: identity.subject.clone(),
@@ -149,9 +156,14 @@ fn reduce_version(
                 room.receipts.remove(0);
             }
         }
-        Input::Presence { subject, connected } => {
-            lobby::presence(&mut room, subject, *connected, now, &mut public)?
-        }
+        Input::Presence { subject, connected } => lobby::presence(
+            &mut room,
+            subject,
+            *connected,
+            now,
+            &mut public,
+            engine_version == "base-v7",
+        )?,
         Input::Timeout => {
             if room.deadline_ms.is_none_or(|d| d > now) {
                 return Err(Error::new(
@@ -179,10 +191,16 @@ fn reduce_version(
     {
         trades::expire(&mut room, &mut public);
     }
-    if engine_version == "base-v4" {
+    if matches!(
+        engine_version,
+        "base-v4" | "base-v5" | "base-v6" | "base-v7"
+    ) {
         trades::prune(&mut room, &mut public);
     }
-    if matches!(engine_version, "base-v3" | "base-v4") {
+    if matches!(
+        engine_version,
+        "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7"
+    ) {
         append_theft_details(input, &room, &mut public);
     }
     room.version += 1;
@@ -230,8 +248,15 @@ fn command(
     id: &str,
     now: u64,
     events: &mut Vec<PublicEvent>,
-    modern: bool,
+    engine_version: &str,
 ) -> Result<()> {
+    let modern = matches!(
+        engine_version,
+        "base-v4" | "base-v5" | "base-v6" | "base-v7"
+    );
+    let require_ready = matches!(engine_version, "base-v5" | "base-v6" | "base-v7");
+    let close_declined = matches!(engine_version, "base-v6" | "base-v7");
+    let lock_opening = engine_version == "base-v7";
     if let Command::Join { name, spectator } = command {
         if room.research && !spectator {
             return Err(Error::new(
@@ -248,8 +273,11 @@ fn command(
         return Err(Error::new(ErrorCode::Forbidden, "join this game first"));
     }
     match command {
-        Command::Start => lobby::start(room, identity, events),
-        Command::RollForOrder => lobby::roll_for_order(room, identity, events),
+        Command::SetReady { ready } => {
+            lobby::set_ready(room, identity, *ready, events, lock_opening)
+        }
+        Command::Start => lobby::start(room, identity, events, require_ready, lock_opening),
+        Command::RollForOrder => lobby::roll_for_order(room, identity, events, require_ready),
         Command::Configure { settings } => lobby::configure(room, identity, *settings, events),
         Command::Act { action } => {
             if matches!(action, settlers_engine::Action::Trade { .. }) {
@@ -302,9 +330,11 @@ fn command(
                     receive: *receive,
                     message: message.clone(),
                     status: OfferStatus::Open,
+                    declined: Vec::new(),
                 },
                 events,
                 modern,
+                close_declined,
             )
         }
         Command::AcceptTrade { offer_id } => {
@@ -313,7 +343,7 @@ fn command(
         }
         Command::RejectTrade { offer_id } => {
             let p = seat(room, identity)?;
-            trades::reject(room, p, offer_id, events)
+            trades::reject(room, p, offer_id, events, close_declined)
         }
         Command::CancelTrade { offer_id } => {
             let p = seat(room, identity)?;
@@ -370,7 +400,7 @@ pub fn state_hash(room: &Room) -> Result<String> {
 fn record(room: &Room, input: Input, now: u64, public: Vec<PublicEvent>) -> Result<Record> {
     Ok(Record {
         schema: 1,
-        engine_version: "base-v4".into(),
+        engine_version: "base-v7".into(),
         game_id: room.id.clone(),
         sequence: room.version,
         timestamp_ms: now,
@@ -386,7 +416,7 @@ pub fn replay(records: &[Record]) -> Result<Room> {
         if record.schema != 1
             || !matches!(
                 record.engine_version.as_str(),
-                "base-v1" | "base-v2" | "base-v3" | "base-v4"
+                "base-v1" | "base-v2" | "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7"
             )
         {
             return Err(Error::new(

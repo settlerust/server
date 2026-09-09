@@ -3,6 +3,9 @@
   "title": "Protocol",
   "type": "object",
   "properties": {
+    "admission_update": {
+      "$ref": "#/$defs/AdmissionUpdate"
+    },
     "client_frame": {
       "$ref": "#/$defs/ClientFrame"
     },
@@ -45,6 +48,7 @@
     "client_frame",
     "server_frame",
     "create_game",
+    "admission_update",
     "guest_request",
     "token_response",
     "command_request",
@@ -349,6 +353,28 @@
         }
       ]
     },
+    "AdmissionUpdate": {
+      "description": "Control-plane admission fence. Accepted only from an external host grant.",
+      "type": "object",
+      "properties": {
+        "players": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "revision": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "revision",
+        "players"
+      ]
+    },
     "ApiError": {
       "type": "object",
       "properties": {
@@ -484,6 +510,25 @@
           ]
         },
         {
+          "description": "Confirm or withdraw this player's readiness while connected by WebSocket.",
+          "type": "object",
+          "properties": {
+            "ready": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_ready"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "ready"
+          ]
+        },
+        {
+          "description": "Any seated player (or observer host) can start when all seats are ready and connected.",
           "type": "object",
           "properties": {
             "type": {
@@ -497,7 +542,7 @@
           ]
         },
         {
-          "description": "Roll publicly for the first seat, then wait for the host to start setup.",
+          "description": "Roll publicly for the first seat once every player is ready.",
           "type": "object",
           "properties": {
             "type": {
@@ -1754,6 +1799,10 @@
         "name": {
           "type": "string"
         },
+        "ready": {
+          "type": "boolean",
+          "default": false
+        },
         "seat": {
           "type": [
             "integer",
@@ -1773,6 +1822,10 @@
     "Observation": {
       "type": "object",
       "properties": {
+        "bank": {
+          "description": "Exact public bank inventory in brick, lumber, wool, grain, ore order.",
+          "$ref": "#/$defs/Resources"
+        },
         "bank_available": {
           "type": "array",
           "items": {
@@ -1913,6 +1966,7 @@
         "hexes",
         "ports",
         "robber",
+        "bank",
         "bank_available",
         "deck_count",
         "players",
@@ -2309,6 +2363,18 @@
         {
           "type": "object",
           "properties": {
+            "type": {
+              "type": "string",
+              "const": "admission_changed"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "settings": {
               "$ref": "#/$defs/Settings"
             },
@@ -2345,6 +2411,29 @@
           "required": [
             "type",
             "name"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ready": {
+              "type": "boolean"
+            },
+            "seat": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "ready_changed"
+            }
+          },
+          "required": [
+            "type",
+            "seat",
+            "ready"
           ]
         },
         {
@@ -2609,6 +2698,16 @@
         },
         "settlements": {
           "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "victory_cards": {
+          "description": "Revealed for every player only once the game has finished.",
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "uint8",
           "maximum": 255,
           "minimum": 0
@@ -3024,6 +3123,7 @@
       "type": "string",
       "enum": [
         "accepted",
+        "declined",
         "cancelled",
         "turn_ended",
         "replaced",
@@ -3033,6 +3133,16 @@
     "TradeOffer": {
       "type": "object",
       "properties": {
+        "declined": {
+          "description": "Explicit passes only; private automatic filtering is never disclosed.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
+        },
         "from": {
           "type": "integer",
           "format": "uint8",

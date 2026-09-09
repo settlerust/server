@@ -140,6 +140,9 @@ async fn stream(
                             continue;
                         }
                         let room = app.games.room(id).await?;
+                        if room.member(&identity.subject).is_none() {
+                            return Err(Error::new(ErrorCode::Forbidden, "your seat was removed by the host"));
+                        }
                         let batch = crate::reducer::batch(&room, &identity.subject, &record)?;
                         send(socket, ServerFrame::Events { batch }).await?;
                         event_cursor = record.sequence;

@@ -32,7 +32,7 @@ Each game has one bounded Tokio command queue and one owner actor. REST, WebSock
 
 Multiple games can progress independently; blocking local SQLite/file operations run through `spawn_blocking`. The actor does no synchronous file I/O. A command's arrival order is the order it enters that game's queue after authentication and parsing. Broadcast consumers receive public records and independently redacted private snapshots.
 
-The deployment model is **one authoritative server process per game set**. Remote policies may run on any node. DynamoDB conditional writes fence stale state changes, but this release does not provide multi-server game ownership leases or cross-server WebSocket fan-out. Horizontally partition game ownership before running multiple servers against the same table. The engine can run independently in many simulation processes without storage or network overhead.
+The deployment model is **one authoritative server process per game set**. Remote policies may run on any node. In managed mode, an external orchestrator partitions games through DynamoDB ownership manifests; conditional writes fence both stale versions and withdrawn owners. Each process can host many independent game actors. The orchestrator controls allocation and replacement, and must never run two processes with the same owner UUID. The server does not provide ownership leases or cross-server WebSocket fan-out. See [the ownership contract](persistence.md#shared-process-ownership). The engine can run independently in many simulation processes without storage or network overhead.
 
 ## Security and observability boundaries
 

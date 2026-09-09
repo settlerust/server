@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [features]
 default = []
 aws = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:aws-sdk-firehose", "dep:aws-sdk-s3", "dep:flate2", "dep:reqwest"]
@@ -14,13 +17,17 @@ settlers-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+sha2 = "0.10"
+uuid = { version = "1", features = ["serde"] }
+wasm-bindgen = "=0.2.128"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uuid = { version = "1", features = ["v4", "serde"] }
 tokio.workspace = true
 axum.workspace = true
 async-trait.workspace = true
-uuid.workspace = true
 futures-util.workspace = true
 hmac = "0.12"
-sha2 = "0.10"
 base64 = "0.22"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 getrandom = "0.3"

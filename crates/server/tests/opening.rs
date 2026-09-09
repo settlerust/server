@@ -3,7 +3,7 @@ use common::*;
 use server::{model::Input, reducer};
 use settlers_protocol::*;
 #[tokio::test]
-async fn opening_is_public_replayable_and_waits_for_host_before_setup() {
+async fn opening_is_public_replayable_and_waits_for_players_before_setup() {
     let h = Harness::new().await;
     for p in 1..4 {
         h.command(
@@ -15,6 +15,7 @@ async fn opening_is_public_replayable_and_waits_for_host_before_setup() {
         )
         .await;
     }
+    h.ready_all().await;
     let before = h.room().await;
     let input = Input::Command {
         identity: identity(0),
@@ -89,7 +90,7 @@ async fn opening_is_public_replayable_and_waits_for_host_before_setup() {
         reducer::reduce(
             &before,
             Input::Command {
-                identity: identity(1),
+                identity: identity(9),
                 request: request(before.version, Command::RollForOrder)
             },
             3

@@ -17,6 +17,7 @@ pub async fn report(games: GameService, server_id: String, table: String) -> any
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
+    let registration_table = std::env::var("SETTLERS_REGISTRATION_TABLE").ok();
     let mut previous: Option<(Instant, f64)> = None;
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -36,6 +37,19 @@ pub async fn report(games: GameService, server_id: String, table: String) -> any
                 "commandP95Ms": command_p95, "commands": commands, "tickLagMs": tick_lag, "loadedGames": games.loaded_games().await });
             db.put_item().table_name(&table).item("game_id", A::S(format!("SERVER#{server_id}")))
                 .item("kind", A::S("METRICS".into())).item("data", A::S(data.to_string())).send().await?;
+            if let Some(table) = &registration_table {
+                let metadata: Value = client.get(format!("{endpoint}/task")).send().await?.error_for_status()?.json().await?;
+                let task_arn = metadata.get("TaskARN").and_then(Value::as_str).ok_or_else(|| anyhow::anyhow!("task ARN missing"))?;
+                let timestamp = now_ms() / 1000;
+                // Separate records cannot overwrite placement or the durable ownership manifest.
+                db.put_item().table_name(table)
+                    .item("pk", A::S("REGISTRATIONS".into())).item("sk", A::S(server_id.clone()))
+                    .item("value", A::M(std::collections::HashMap::from([
+                        ("taskArn".into(), A::S(task_arn.into())),
+                        ("timestamp".into(), A::N(timestamp.to_string())),
+                    ])))
+                    .item("expiresAt", A::N((timestamp + 180).to_string())).send().await?;
+            }
             Ok::<_, anyhow::Error>(())
         }.await;
         if let Err(error) = sampled {

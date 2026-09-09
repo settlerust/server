@@ -26,7 +26,14 @@ async fn main() -> anyhow::Result<()> {
             Arc::new(LocalArchive::new(config.data_dir.join("archive"))),
         )
     };
-    let games = GameService::restore(store, archive, now_ms()).await?;
+    let archive = research_archive(archive).await?;
+    let capacity = std::env::var("SETTLERS_MAX_LOADED_GAMES")
+        .ok()
+        .map(|v| v.parse::<usize>())
+        .transpose()?
+        .unwrap_or(usize::MAX);
+    anyhow::ensure!(capacity > 0, "SETTLERS_MAX_LOADED_GAMES must be positive");
+    let games = GameService::restore_with_capacity(store, archive, now_ms(), capacity).await?;
     #[cfg(feature = "aws")]
     if let (Ok(id), Ok(table)) = (
         std::env::var("SETTLERS_SERVER_ID"),
@@ -101,6 +108,10 @@ async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {
     let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let table = std::env::var("SETTLERS_DYNAMODB_TABLE")?;
     let stream = std::env::var("SETTLERS_FIREHOSE_STREAM")?;
+    anyhow::ensure!(
+        stream.split(',').all(|name| !name.trim().is_empty()),
+        "SETTLERS_FIREHOSE_STREAM contains an empty stream name"
+    );
     let bucket = std::env::var("SETTLERS_ARCHIVE_BUCKET")?;
     let mut store = DynamoStore::new(aws_sdk_dynamodb::Client::new(&config), table);
     if let Ok(id) = std::env::var("SETTLERS_SERVER_ID") {
@@ -121,6 +132,27 @@ async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {
 #[cfg(not(feature = "aws"))]
 async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {
     anyhow::bail!("AWS storage requires cargo build --features aws")
+}
+
+async fn research_archive(archive: Arc<dyn Archive>) -> anyhow::Result<Arc<dyn Archive>> {
+    let Ok(stream) = std::env::var("SETTLERS_RESEARCH_FIREHOSE_STREAM") else {
+        return Ok(archive);
+    };
+    anyhow::ensure!(
+        stream.split(',').all(|name| !name.trim().is_empty()),
+        "SETTLERS_RESEARCH_FIREHOSE_STREAM must not be empty"
+    );
+    #[cfg(feature = "aws")]
+    {
+        let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        Ok(Arc::new(server::storage::research::ResearchArchive::new(
+            archive,
+            aws_sdk_firehose::Client::new(&config),
+            stream,
+        )))
+    }
+    #[cfg(not(feature = "aws"))]
+    anyhow::bail!("Research Firehose delivery requires cargo build --features aws")
 }
 
 async fn shutdown() {

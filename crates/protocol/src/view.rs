@@ -7,6 +7,8 @@ pub struct MemberView {
     pub seat: Option<u8>,
     pub name: String,
     pub connected: bool,
+    #[serde(default)]
+    pub ready: bool,
     pub is_you: bool,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -26,6 +28,9 @@ pub struct TradeOffer {
     pub receive: Resources,
     pub message: Option<Communication>,
     pub status: OfferStatus,
+    /// Explicit passes only; private automatic filtering is never disclosed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub declined: Vec<u8>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GameView {

@@ -2,6 +2,8 @@
 #[cfg(feature = "aws")]
 pub mod aws;
 pub mod local;
+#[cfg(feature = "aws")]
+pub mod research;
 use crate::{
     error::Result,
     model::{Record, Room},
@@ -50,4 +52,24 @@ pub fn encode_record(record: &Record) -> Result<Vec<u8>> {
         serde_json::to_string(&record.public).map_err(crate::error::Error::storage)?,
     );
     serde_json::to_vec(&value).map_err(crate::error::Error::storage)
+}
+
+/// Identical SHA-256 routing in the control plane keeps each game's events on one source shard.
+#[cfg(feature = "aws")]
+pub fn firehose_batches<'a>(
+    streams: &'a str,
+    records: &'a [Record],
+) -> std::collections::BTreeMap<&'a str, Vec<&'a Record>> {
+    use sha2::{Digest, Sha256};
+    let names: Vec<_> = streams.split(',').collect();
+    let mut groups = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for record in records {
+        let digest = Sha256::digest(record.game_id.as_bytes());
+        let hash = digest[..8]
+            .iter()
+            .fold(0_u64, |value, byte| (value << 8) | u64::from(*byte));
+        let stream = names[(hash % names.len() as u64) as usize];
+        groups.entry(stream).or_default().push(record);
+    }
+    groups
 }

@@ -12,6 +12,12 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 pub(super) enum Request {
+    Admission {
+        identity: Identity,
+        request: AdmissionUpdate,
+        now: u64,
+        reply: oneshot::Sender<Result<()>>,
+    },
     Execute {
         identity: Identity,
         request: CommandRequest,
@@ -42,6 +48,32 @@ pub(super) async fn run(
     let mut sessions = HashMap::<String, HashSet<String>>::new();
     while let Some(request) = queue.recv().await {
         match request {
+            Request::Admission {
+                identity,
+                request,
+                now,
+                reply,
+            } => {
+                let result = if room.host != identity.subject {
+                    Err(Error::new(
+                        ErrorCode::Forbidden,
+                        "only the host can update admission",
+                    ))
+                } else if room.admission.as_ref() == Some(&request) {
+                    Ok(())
+                } else {
+                    commit(
+                        &mut room,
+                        &store,
+                        &events,
+                        Input::Admission { identity, request },
+                        now,
+                    )
+                    .await
+                };
+                sessions.retain(|subject, _| room.member(subject).is_some());
+                let _ = reply.send(result);
+            }
             Request::Read { reply } => {
                 let _ = reply.send(room.clone());
             }

@@ -120,13 +120,15 @@ fn exact_chance_branches_have_unit_probability() {
 }
 
 #[test]
-fn observations_do_not_expose_exact_bank_counts() {
+fn observations_expose_public_bank_counts_without_raw_opponent_hands() {
     let mut a = main_phase();
     let mut b = a;
     hand(&mut a, 1, Resources([4, 0, 0, 0, 0]));
     hand(&mut b, 1, Resources([2, 2, 0, 0, 0]));
-    let av = serde_json::to_value(observe(&a, None)).unwrap();
-    let bv = serde_json::to_value(observe(&b, None)).unwrap();
+    let mut av = serde_json::to_value(observe(&a, None)).unwrap();
+    let mut bv = serde_json::to_value(observe(&b, None)).unwrap();
+    assert_ne!(av["bank"], bv["bank"]);
+    av.as_object_mut().unwrap().remove("bank");
+    bv.as_object_mut().unwrap().remove("bank");
     assert_eq!(av, bv);
-    assert!(av.get("bank").is_none());
 }

@@ -31,6 +31,14 @@ fn yes() -> bool {
     true
 }
 
+/// Control-plane admission fence. Accepted only from an external host grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionUpdate {
+    pub revision: u64,
+    pub players: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Filter {
@@ -72,8 +80,13 @@ pub enum Command {
         #[serde(default)]
         spectator: bool,
     },
+    /// Confirm or withdraw this player's readiness while connected by WebSocket.
+    SetReady {
+        ready: bool,
+    },
+    /// Any seated player (or observer host) can start when all seats are ready and connected.
     Start,
-    /// Roll publicly for the first seat, then wait for the host to start setup.
+    /// Roll publicly for the first seat once every player is ready.
     RollForOrder,
     Configure {
         settings: Settings,

@@ -32,6 +32,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
         clients.push(client);
     }
+    for client in &clients {
+        let mut socket = client.connect(&id).await?;
+        socket.next().await?.ok_or("missing presence snapshot")?;
+        client
+            .command(
+                &id,
+                client.game(&id).await?.version,
+                Command::SetReady { ready: true },
+            )
+            .await?;
+        tokio::spawn(async move { while let Ok(Some(_)) = socket.next().await {} });
+    }
     host.command(&id, host.game(&id).await?.version, Command::Start)
         .await?;
     println!("game_id={id}");

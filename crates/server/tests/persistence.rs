@@ -126,7 +126,7 @@ async fn disconnect_grants_one_full_allotment_and_reconnect_does_not_reset_repea
         .presence(
             &h.id,
             identity(current).subject,
-            "socket-a".into(),
+            format!("test-{current}"),
             true,
             1000,
         )
@@ -136,7 +136,7 @@ async fn disconnect_grants_one_full_allotment_and_reconnect_does_not_reset_repea
         .presence(
             &h.id,
             identity(current).subject,
-            "socket-a".into(),
+            format!("test-{current}"),
             false,
             2000,
         )
@@ -233,6 +233,7 @@ async fn host_can_configure_lobby_but_started_rules_are_fixed() {
         )
         .await;
     assert_eq!(response.unwrap_err().0.code, ErrorCode::Forbidden);
+    h.ready_all().await;
     h.command(0, Command::Start).await;
     let version = h.room().await.version;
     assert!(

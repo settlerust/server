@@ -41,6 +41,22 @@ fn theft_resource_is_private_and_old_archives_still_replay() {
         room = next;
         records.push(record);
     }
+    for p in 0..4 {
+        for event in [
+            Input::Presence {
+                subject: identity(p).subject,
+                connected: true,
+            },
+            Input::Command {
+                identity: identity(p),
+                request: request(room.version + 1, Command::SetReady { ready: true }),
+            },
+        ] {
+            let (next, record) = reducer::reduce(&room, event, 1).unwrap();
+            room = next;
+            records.push(record);
+        }
+    }
     let (next, record) = reducer::reduce(
         &room,
         Input::Command {

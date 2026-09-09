@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+pub use crate::identity::{Identity, validate_name};
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hmac::{Hmac, Mac};
@@ -7,12 +8,6 @@ use settlers_protocol::{ErrorCode, TokenResponse};
 use sha2::Sha256;
 use std::{collections::BTreeMap, sync::Arc};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Identity {
-    pub subject: String,
-    pub name: String,
-}
 /// Providers authenticate credentials; the server issues the same stable-subject JWT afterward.
 #[async_trait]
 pub trait IdentityProvider: Send + Sync {
@@ -31,15 +26,6 @@ impl IdentityProvider for GuestProvider {
             name: request.name,
         })
     }
-}
-pub fn validate_name(name: &str) -> Result<()> {
-    if name.trim().is_empty() || name.len() > 80 || name.chars().any(char::is_control) {
-        return Err(Error::new(
-            ErrorCode::InvalidRequest,
-            "name must be 1–80 bytes without control characters",
-        ));
-    }
-    Ok(())
 }
 #[derive(Clone)]
 pub struct Auth {

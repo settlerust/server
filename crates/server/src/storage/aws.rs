@@ -298,29 +298,31 @@ impl FirehoseArchive {
 impl Archive for FirehoseArchive {
     async fn deliver(&self, records: &[Record]) -> Result<()> {
         // Bound batches below Firehose's 500 records / 4 MiB request limit.
-        for chunk in records.chunks(25) {
-            let mut request = self
-                .firehose
-                .put_record_batch()
-                .delivery_stream_name(&self.stream);
-            for record in chunk {
-                let mut bytes = super::encode_record(record)?;
-                bytes.push(b'\n');
-                if bytes.len() > 100_000 {
-                    return Err(Error::storage("oversized Firehose record"));
+        for (stream, records) in super::firehose_batches(&self.stream, records) {
+            for chunk in records.chunks(25) {
+                let mut request = self
+                    .firehose
+                    .put_record_batch()
+                    .delivery_stream_name(stream);
+                for record in chunk {
+                    let mut bytes = super::encode_record(record)?;
+                    bytes.push(b'\n');
+                    if bytes.len() > 100_000 {
+                        return Err(Error::storage("oversized Firehose record"));
+                    }
+                    request = request.records(
+                        FirehoseRecord::builder()
+                            .data(aws_sdk_firehose::primitives::Blob::new(bytes))
+                            .build()
+                            .map_err(Error::storage)?,
+                    );
                 }
-                request = request.records(
-                    FirehoseRecord::builder()
-                        .data(aws_sdk_firehose::primitives::Blob::new(bytes))
-                        .build()
-                        .map_err(Error::storage)?,
-                );
-            }
-            let response = request.send().await.map_err(Error::storage)?;
-            if response.failed_put_count > 0 {
-                return Err(Error::storage(
-                    "partial Firehose batch failure; retrying is safe",
-                ));
+                let response = request.send().await.map_err(Error::storage)?;
+                if response.failed_put_count > 0 {
+                    return Err(Error::storage(
+                        "partial Firehose batch failure; retrying is safe",
+                    ));
+                }
             }
         }
         Ok(())

@@ -71,6 +71,28 @@ impl Harness {
             .await
             .unwrap()
     }
+    pub async fn ready_all(&self) {
+        for member in self
+            .room()
+            .await
+            .members
+            .iter()
+            .filter(|m| m.seat.is_some())
+        {
+            let p = member.seat.unwrap();
+            self.service
+                .presence(
+                    &self.id,
+                    member.identity.subject.clone(),
+                    format!("test-{p}"),
+                    true,
+                    0,
+                )
+                .await
+                .unwrap();
+            self.command(p, Command::SetReady { ready: true }).await;
+        }
+    }
     pub async fn start(&self) {
         for p in 1..4 {
             self.command(
@@ -82,6 +104,7 @@ impl Harness {
             )
             .await;
         }
+        self.ready_all().await;
         self.command(0, Command::Start).await;
     }
     pub async fn trading() -> Self {

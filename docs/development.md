@@ -82,7 +82,15 @@ Staged discards introduced archive engine version `base-v2`; current transitions
 
 The owning `GameView.discard` contains the round `id`, fixed `required` count, editable `draft`, confirmed `locked` cards, and `deadline_ms`. It is absent for spectators and only contains the recipient's choices. Send `select_discard { discard_id, resources }` to replace the draft, then `confirm_discard { discard_id }` to lock it. Multiple confirmations may fill the quota. These commands tolerate other seats advancing the room version but require the exact active round ID. Receipts remain idempotent. Confirmed cards cannot be removed, and the engine applies one exact discard when the quota is complete. The legacy `act/discard` command still works for agents; it must include previously locked cards.
 
-At expiry, the server preserves locked cards and the latest draft, fills only the shortfall from the largest remaining resource stack (ties by resource ID), and resolves every pending seat. Staging is committed with the room and outbox and survives restart. Public `discarded` counts are emitted only once a seat resolves; discarded resource types remain private. An automatically rolled seven also opens the shared window.
+At expiry, the server preserves locked cards and the latest draft, fills only the shortfall from the largest remaining resource stack (ties by resource ID), and resolves every pending seat. Staging is committed with the room and outbox and survives restart. Public `discarded` counts are emitted only once a seat resolves; resource types are not included in that event. An automatically rolled seven also opens the shared window.
+
+Public observations now include exact `bank` resource counts, alongside the
+derived `bank_available` flags. No raw opponent resource hand is added. Inventory
+conservation can nevertheless reveal combined opponent holdings and resource types
+returned to the bank between snapshots, including after a resolved discard. The
+discard event itself still carries only a count; private staged drafts and locked
+choices are unchanged. This public-bank rule applies equally to seated players,
+ordinary spectators, and research spectators.
 
 ## Private theft receipts and lobby discovery
 

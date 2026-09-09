@@ -8,6 +8,26 @@ pub struct Board {
     roads: [u8; 27],
 }
 impl Board {
+    /// Reconstruct public occupancy for offline simulation, validating every packed value.
+    pub fn from_public(buildings: &[u8], roads: &[Option<u8>]) -> Result<Self, crate::RuleError> {
+        if buildings.len() != 54
+            || roads.len() != 72
+            || buildings.iter().any(|&b| b > 8)
+            || roads.iter().flatten().any(|&p| p >= 4)
+        {
+            return Err(crate::RuleError::InvalidLocation);
+        }
+        let mut board = Self::default();
+        for (v, &b) in buildings.iter().enumerate() {
+            board.set_building(v as u8, b);
+        }
+        for (e, &p) in roads.iter().enumerate() {
+            if let Some(p) = p {
+                board.set_road(e as u8, p);
+            }
+        }
+        Ok(board)
+    }
     /// 0 is empty, 1..=4 are settlements, 5..=8 are cities.
     pub fn building(&self, vertex: u8) -> u8 {
         self.vertices

@@ -7,12 +7,17 @@ use settlers_engine::{Event, RuleError};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PublicEvent {
     LobbyCreated,
+    AdmissionChanged,
     SettingsChanged {
         settings: crate::Settings,
     },
     Joined {
         seat: Option<u8>,
         name: String,
+    },
+    ReadyChanged {
+        seat: u8,
+        ready: bool,
     },
     Started,
     OrderDecided {
@@ -54,6 +59,7 @@ pub enum PublicEvent {
 #[serde(rename_all = "snake_case")]
 pub enum TradeCloseReason {
     Accepted,
+    Declined,
     Cancelled,
     TurnEnded,
     Replaced,

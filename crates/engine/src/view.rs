@@ -12,6 +12,9 @@ pub struct PublicPlayer {
     pub cities: u8,
     pub roads: u8,
     pub points: u8,
+    /// Revealed for every player only once the game has finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub victory_cards: Option<u8>,
     pub road_length: u8,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -22,6 +25,8 @@ pub struct Observation {
     pub hexes: [u8; 19],
     pub ports: [u8; 9],
     pub robber: u8,
+    /// Exact public bank inventory in brick, lumber, wool, grain, ore order.
+    pub bank: Resources,
     pub bank_available: [bool; 5],
     pub deck_count: u8,
     pub players: Vec<PublicPlayer>,
@@ -45,6 +50,7 @@ pub fn observe(s: &State, seat: Option<u8>) -> Observation {
         hexes: s.layout.hexes,
         ports: s.layout.ports,
         robber: s.robber,
+        bank: s.bank,
         bank_available: s.bank.0.map(|count| count > 0),
         deck_count: s.deck_count(),
         players: (0..s.settings.players)
@@ -68,6 +74,10 @@ pub fn observe(s: &State, seat: Option<u8>) -> Observation {
                         public_points(s, p)
                     },
                     road_length: road_length(s, p),
+                    victory_cards: matches!(s.phase, Phase::Finished { .. }).then_some(
+                        player.development[Development::VictoryPoint as usize]
+                            + player.new_development[Development::VictoryPoint as usize],
+                    ),
                 }
             })
             .collect(),

@@ -7,6 +7,8 @@ pub struct Member {
     pub identity: Identity,
     pub seat: Option<u8>,
     pub connected: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ready: bool,
     pub grace_turn: Option<u32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,8 @@ pub struct Room {
     pub game: Option<State>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opening: Option<Opening>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<AdmissionUpdate>,
     pub offers: Vec<Offer>,
     pub filters: [[Filter; 4]; 4],
     pub receipts: Vec<StoredReceipt>,
@@ -76,6 +80,10 @@ impl Room {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Input {
+    Admission {
+        identity: Identity,
+        request: AdmissionUpdate,
+    },
     Create {
         request: CreateGame,
         identity: Identity,

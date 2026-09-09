@@ -48,6 +48,22 @@ async fn research_spectators_get_live_hands_while_agents_remain_redacted_and_rep
             .await
             .unwrap();
     }
+    for p in 0..4 {
+        h.service
+            .presence(&id, identity(p).subject, format!("test-{p}"), true, 1)
+            .await
+            .unwrap();
+        let version = h.service.room(&id).await.unwrap().version;
+        h.service
+            .execute(
+                &id,
+                identity(p),
+                request(version, Command::SetReady { ready: true }),
+                1,
+            )
+            .await
+            .unwrap();
+    }
     let room = h.service.room(&id).await.unwrap();
     assert!(
         reducer::reduce(

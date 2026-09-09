@@ -114,6 +114,17 @@ impl Grant {
         Ok(())
     }
     pub fn authorize_command(&self, command: &Command) -> Result<()> {
+        if self.role == Role::Player
+            && matches!(
+                command,
+                Command::Join {
+                    spectator: true,
+                    ..
+                }
+            )
+        {
+            return Err(denied());
+        }
         if matches!(command, Command::Configure { .. }) {
             return Err(denied());
         }

@@ -15,6 +15,7 @@ pub struct GameService {
     inner: Arc<Inner>,
 }
 struct Inner {
+    capacity: usize,
     metrics: crate::metrics::Metrics,
     creation: tokio::sync::Mutex<()>,
     rooms: RwLock<BTreeMap<String, Handle>>,
@@ -33,8 +34,17 @@ impl GameService {
         archive: Arc<dyn Archive>,
         now: u64,
     ) -> Result<Self> {
+        Self::restore_with_capacity(store, archive, now, usize::MAX).await
+    }
+    pub async fn restore_with_capacity(
+        store: Arc<dyn Store>,
+        archive: Arc<dyn Archive>,
+        now: u64,
+        capacity: usize,
+    ) -> Result<Self> {
         let service = Self {
             inner: Arc::new(Inner {
+                capacity,
                 metrics: crate::metrics::Metrics::default(),
                 creation: tokio::sync::Mutex::new(()),
                 rooms: RwLock::new(BTreeMap::new()),
@@ -48,6 +58,12 @@ impl GameService {
         }
         for id in service.inner.store.ids().await? {
             if let Some(mut room) = service.inner.store.load(&id).await? {
+                if service.loaded_games().await >= capacity {
+                    return Err(Error::new(
+                        ErrorCode::Backpressure,
+                        "assigned games exceed server capacity",
+                    ));
+                }
                 if room.schema != 1 {
                     return Err(Error::new(
                         ErrorCode::Internal,
@@ -170,6 +186,12 @@ impl GameService {
             }
             return Ok(view);
         }
+        if self.loaded_games().await >= self.inner.capacity {
+            return Err(Error::new(
+                ErrorCode::Backpressure,
+                "server is waiting for released game capacity",
+            ));
+        }
         if let Some(room) = self.inner.store.load(id).await? {
             let view = crate::reducer::view(&room, &identity.subject)?;
             if !view.host {
@@ -214,6 +236,27 @@ impl GameService {
             .metrics
             .command(started.elapsed().as_millis() as u64);
         result
+    }
+    /// Commit admission and seat removal atomically with the replay outbox.
+    pub async fn admission(
+        &self,
+        id: &str,
+        identity: Identity,
+        request: AdmissionUpdate,
+        now: u64,
+    ) -> Result<()> {
+        let handle = self.handle(id).await?;
+        let (reply, receive) = oneshot::channel();
+        enqueue(
+            &handle,
+            Request::Admission {
+                identity,
+                request,
+                now,
+                reply,
+            },
+        )?;
+        receive.await.map_err(|_| closed())?
     }
     pub async fn room(&self, id: &str) -> Result<Room> {
         let handle = self.handle(id).await?;

@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use axum::{
     Json,
     http::StatusCode,
@@ -26,7 +27,10 @@ impl Error {
         e
     }
     pub fn storage(e: impl std::fmt::Display) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         tracing::error!(error=%e,"storage operation failed");
+        #[cfg(target_arch = "wasm32")]
+        let _ = e;
         Self::new(
             ErrorCode::StorageUnavailable,
             "durable storage is temporarily unavailable",
@@ -44,6 +48,7 @@ impl From<settlers_engine::RuleError> for Error {
         })
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = match self.0.code {

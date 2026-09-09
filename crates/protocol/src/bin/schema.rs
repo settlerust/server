@@ -7,6 +7,7 @@ struct Protocol {
     client_frame: ClientFrame,
     server_frame: ServerFrame,
     create_game: CreateGame,
+    admission_update: AdmissionUpdate,
     guest_request: GuestRequest,
     token_response: TokenResponse,
     command_request: CommandRequest,

@@ -16,6 +16,7 @@ pub(super) fn offer(
     offer: TradeOffer,
     events: &mut Vec<PublicEvent>,
     modern: bool,
+    close_declined: bool,
 ) -> Result<()> {
     if room.offers.iter().any(|o| o.public.id == offer.id) {
         return Err(Error::new(ErrorCode::Conflict, "offer ID already exists"));
@@ -95,6 +96,9 @@ pub(super) fn offer(
         rejected,
         turn: modern.then_some(turn),
     });
+    if close_declined && let Some(offer) = room.offers.last_mut() {
+        close_if_declined(offer, events);
+    }
     while room.offers.len() > 64 {
         if let Some(i) = room
             .offers
@@ -124,6 +128,16 @@ fn close(offer: &mut Offer, reason: TradeCloseReason, events: &mut Vec<PublicEve
         reason,
         winner: None,
     });
+}
+fn close_if_declined(offer: &mut Offer, events: &mut Vec<PublicEvent>) {
+    if offer
+        .public
+        .to
+        .iter()
+        .all(|p| offer.rejected & (1 << p) != 0)
+    {
+        close(offer, TradeCloseReason::Declined, events);
+    }
 }
 /// Revalidate promises in the same transaction as every resource-changing action.
 pub(super) fn prune(room: &mut Room, events: &mut Vec<PublicEvent>) {
@@ -197,6 +211,7 @@ pub(super) fn reject(
     p: u8,
     id: &str,
     events: &mut Vec<PublicEvent>,
+    close_declined: bool,
 ) -> Result<()> {
     let offer = room
         .offers
@@ -211,6 +226,12 @@ pub(super) fn reject(
         offer_id: id.into(),
         player: p,
     });
+    if close_declined {
+        if !offer.public.declined.contains(&p) {
+            offer.public.declined.push(p);
+        }
+        close_if_declined(offer, events);
+    }
     Ok(())
 }
 pub(super) fn cancel(
