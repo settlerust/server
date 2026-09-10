@@ -7,13 +7,13 @@
 //! the same stratified dice, so comparisons are paired. Leaves are evaluated at the end of the
 //! deepest planned turn. Iterative deepening keeps the deepest fully completed level count.
 use super::Leaf;
-use super::key::information_set;
+use super::key::{Key, information_set};
 use super::leaf::Terms;
 use super::opponent;
 use super::weights::Weights;
 use serde::{Deserialize, Serialize};
 use settlers_engine::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 /// Afterstate groups of one line of play with their probability masses.
 pub type Line = Vec<(f64, Vec<World>)>;
@@ -28,6 +28,37 @@ pub struct Outcome {
     pub state: State,
 }
 type Recorded = Vec<(f64, f64, State)>;
+/// Arrival groups of one opponents' round from an afterstate group: (mass share, worlds).
+type Arrivals = Vec<(f64, Vec<World>)>;
+/// A cached lookahead value: terms, recorded outcomes, search generation, transitions cost.
+type MemoEntry = (Terms, Recorded, u32, u64);
+/// Transposition tables shared by the depth passes of one decision, or by every decision of a
+/// turn. Entries carry the search generation that made them and the transitions they cost, so
+/// a hit from an earlier generation can report the work it saved. Values are identical with
+/// and without the tables whenever no node or time budget binds; under a binding budget the
+/// cached search completes more of the tree in the same budget.
+#[derive(Default)]
+pub struct Cache {
+    pub lines: HashMap<Key, (f64, Line, u32, u64)>,
+    /// Keyed by position, level, and the depth cap, since a value depends on how many more
+    /// turns are planned below it.
+    pub memo: HashMap<(Key, u8, u8), MemoEntry>,
+    pub rounds: HashMap<(Key, u8), (Arrivals, u32, u64)>,
+    /// The (turn, current seat) the entries belong to.
+    pub owner: Option<(u32, u8)>,
+    pub generation: u32,
+}
+impl Cache {
+    pub fn clear(&mut self) {
+        self.lines.clear();
+        self.memo.clear();
+        self.rounds.clear();
+        self.owner = None;
+    }
+    pub fn entries(&self) -> usize {
+        self.lines.len() + self.memo.len() + self.rounds.len()
+    }
+}
 #[derive(Debug, Clone, Copy)]
 pub struct World {
     pub state: State,
@@ -40,6 +71,9 @@ pub struct Stats {
     pub afterstates: u64,
     pub expanded: u64,
     pub transpositions: u64,
+    /// Hits on entries made by an earlier depth pass or decision, and the transitions they saved.
+    pub cache_hits: u64,
+    pub cached_transitions: u64,
     pub scenarios: u64,
     pub own_nodes: u64,
     pub per_level_nodes: Vec<u64>,
@@ -73,8 +107,8 @@ pub struct Search<'a> {
     /// Probability mass of the path from the root action to the current planned turn.
     pub path_mass: f64,
     pub outcomes: Vec<Outcome>,
-    memo: HashMap<(u64, u8), (Terms, Recorded)>,
-    lines: HashMap<u64, (f64, Line)>,
+    cache: &'a mut Cache,
+    generation: u32,
 }
 const MAX_STEPS: u32 = 400;
 
@@ -183,7 +217,10 @@ impl<'a> Search<'a> {
         limits: Limits,
         over_time: &'a dyn Fn() -> bool,
         model: Leaf,
+        cache: &'a mut Cache,
     ) -> Self {
+        cache.generation = cache.generation.wrapping_add(1);
+        let generation = cache.generation;
         Self {
             seat,
             w,
@@ -195,8 +232,15 @@ impl<'a> Search<'a> {
             record: false,
             path_mass: 1.0,
             outcomes: Vec::new(),
-            memo: HashMap::new(),
-            lines: HashMap::new(),
+            cache,
+            generation,
+        }
+    }
+    /// Account for a hit on an entry made before this search generation: the work it saved.
+    fn reuse(&mut self, generation: u32, ticks: u64) {
+        if generation != self.generation {
+            self.stats.cache_hits += 1;
+            self.stats.cached_transitions += ticks;
         }
     }
     fn note_outcome(&mut self, level: u8, share: f64, value: f64, state: State) {
@@ -244,17 +288,24 @@ impl<'a> Search<'a> {
         worlds
     }
     /// Split worlds by the root player's information set.
-    fn regroup(&self, worlds: Vec<World>) -> Vec<(u64, Vec<World>)> {
-        let mut groups: BTreeMap<u64, Vec<World>> = BTreeMap::new();
+    /// Groups are ordered by first appearance, so the order of every sum over them, and with
+    /// it the value bits, does not depend on the key function.
+    fn regroup(&self, worlds: Vec<World>) -> Vec<(Key, Vec<World>)> {
+        let mut index: HashMap<Key, usize> = HashMap::new();
+        let mut groups: Vec<(Key, Vec<World>)> = Vec::new();
         for w in worlds {
             if w.weight > 1e-12 {
-                groups
-                    .entry(information_set(&w.state, self.seat))
-                    .or_default()
-                    .push(w);
+                let key = information_set(&w.state, self.seat);
+                match index.get(&key) {
+                    Some(&i) => groups[i].1.push(w),
+                    None => {
+                        index.insert(key, groups.len());
+                        groups.push((key, vec![w]));
+                    }
+                }
             }
         }
-        groups.into_iter().collect()
+        groups
     }
     /// Apply one action to every world with exact chance branches.
     pub fn step(&mut self, worlds: &[World], p: u8, a: Action) -> Result<Vec<World>, RuleError> {
@@ -631,10 +682,13 @@ impl<'a> Search<'a> {
     ) -> Result<(f64, Line), RuleError> {
         let s = worlds[0].state;
         let key = information_set(&s, self.seat);
-        if let Some(hit) = self.lines.get(&key) {
+        if let Some((value, line, generation, ticks)) = self.cache.lines.get(&key) {
+            let (hit, generation, ticks) = ((*value, line.clone()), *generation, *ticks);
             self.stats.transpositions += 1;
-            return Ok(hit.clone());
+            self.reuse(generation, ticks);
+            return Ok(hit);
         }
+        let ticks_before = self.stats.transitions;
         let worlds = Self::normalized(worlds);
         let p = actor(&s);
         let ended = matches!(s.phase, Phase::Finished { .. })
@@ -693,7 +747,10 @@ impl<'a> Search<'a> {
         }
         let result = best.unwrap_or_else(|| (self.leaf(&worlds).total(), vec![(1.0, worlds)]));
         if !self.aborted {
-            self.lines.insert(key, result.clone());
+            let ticks = self.stats.transitions - ticks_before;
+            self.cache
+                .lines
+                .insert(key, (result.0, result.1.clone(), self.generation, ticks));
         }
         Ok(result)
     }
@@ -738,17 +795,24 @@ impl<'a> Search<'a> {
         level: u8,
         steps: u32,
     ) -> Result<(Terms, Option<Action>), RuleError> {
-        let key = (information_set(&worlds[0].state, self.seat), level);
-        if let Some((v, recorded)) = self.memo.get(&key) {
+        let key = (
+            information_set(&worlds[0].state, self.seat),
+            level,
+            self.limits.depth,
+        );
+        if let Some((v, recorded, generation, ticks)) = self.cache.memo.get(&key) {
+            let (v, recorded, generation, ticks) =
+                (v.clone(), recorded.clone(), *generation, *ticks);
             self.stats.transpositions += 1;
-            let v = v.clone();
+            self.reuse(generation, ticks);
             if self.record {
-                for &(share, value, state) in recorded.clone().iter() {
+                for (share, value, state) in recorded {
                     self.note_outcome(level, share, value, state);
                 }
             }
             return Ok((v, None));
         }
+        let ticks_before = self.stats.transitions;
         let worlds = Self::normalized(worlds);
         let (_, lines) = self.best_line(worlds.clone(), level, steps)?;
         let mass_total: f64 = lines
@@ -781,7 +845,10 @@ impl<'a> Search<'a> {
             total = self.leaf(&worlds);
         }
         if !self.aborted {
-            self.memo.insert(key, (total.clone(), recorded));
+            let ticks = self.stats.transitions - ticks_before;
+            self.cache
+                .memo
+                .insert(key, (total.clone(), recorded, self.generation, ticks));
         }
         Ok((total, None))
     }
@@ -855,18 +922,27 @@ impl<'a> Search<'a> {
 
     // ----- opponents' round under common random scenarios ------------------------------------
 
-    /// Simulate from an afterstate through every other seat's turn to the root player's next
-    /// main phase, then plan the next level. Averages over the level's scenarios.
-    pub fn round(&mut self, worlds: &[World], level: u8) -> Result<Terms, RuleError> {
+    /// Arrival positions after every other seat's turn, for every scenario of the level, as
+    /// (mass share, group) in scenario then group order. Cached per afterstate group and level
+    /// across the depth passes of a decision; `None` when the search aborted mid-round.
+    fn arrivals(&mut self, worlds: &[World], level: u8) -> Result<Option<Arrivals>, RuleError> {
         let count = if level <= 1 {
             self.limits.scenarios
         } else {
             self.limits.inner_scenarios
         }
         .max(1);
+        let key = (information_set(&worlds[0].state, self.seat), level);
+        if let Some((arrivals, generation, ticks)) = self.cache.rounds.get(&key) {
+            let (arrivals, generation, ticks) = (arrivals.clone(), *generation, *ticks);
+            self.stats.scenarios += count as u64;
+            self.reuse(generation, ticks);
+            return Ok(Some(arrivals));
+        }
+        let ticks_before = self.stats.transitions;
         let players = worlds[0].state.settings.players as usize;
         let mut scenarios = Scenario::set(count, u32::from(level), players);
-        let mut total = Terms::default();
+        let mut arrivals: Arrivals = Vec::new();
         for scenario in &mut scenarios {
             self.stats.scenarios += 1;
             let mut arrived = Vec::with_capacity(worlds.len());
@@ -935,29 +1011,44 @@ impl<'a> Search<'a> {
                     weight: w.weight,
                 });
                 if self.aborted {
-                    return Ok(Terms::default());
+                    return Ok(None);
                 }
             }
             for (_, group) in self.regroup(arrived) {
-                let mass = Self::mass(&group);
-                let finished = matches!(group[0].state.phase, Phase::Finished { .. });
-                let share = mass / count as f64;
-                let value = if finished || level + 1 > self.limits.depth {
-                    let state = group[0].state;
-                    let value = self.leaf(&Self::normalized(group));
-                    if finished && level < self.limits.depth {
-                        self.note_outcome(level + 1, share, value.total(), state);
-                    }
-                    value
-                } else {
-                    let saved = self.path_mass;
-                    self.path_mass *= share;
-                    let planned = self.plan(group, level + 1);
-                    self.path_mass = saved;
-                    planned?.0
-                };
-                total.add_scaled(&value, share);
+                let share = Self::mass(&group) / count as f64;
+                arrivals.push((share, group));
             }
+        }
+        let ticks = self.stats.transitions - ticks_before;
+        self.cache
+            .rounds
+            .insert(key, (arrivals.clone(), self.generation, ticks));
+        Ok(Some(arrivals))
+    }
+    /// Simulate from an afterstate through every other seat's turn to the root player's next
+    /// main phase, then plan the next level. Averages over the level's scenarios.
+    pub fn round(&mut self, worlds: &[World], level: u8) -> Result<Terms, RuleError> {
+        let Some(arrivals) = self.arrivals(worlds, level)? else {
+            return Ok(Terms::default());
+        };
+        let mut total = Terms::default();
+        for (share, group) in arrivals {
+            let finished = matches!(group[0].state.phase, Phase::Finished { .. });
+            let value = if finished || level + 1 > self.limits.depth {
+                let state = group[0].state;
+                let value = self.leaf(&Self::normalized(group));
+                if finished && level < self.limits.depth {
+                    self.note_outcome(level + 1, share, value.total(), state);
+                }
+                value
+            } else {
+                let saved = self.path_mass;
+                self.path_mass *= share;
+                let planned = self.plan(group, level + 1);
+                self.path_mass = saved;
+                planned?.0
+            };
+            total.add_scaled(&value, share);
         }
         Ok(total)
     }

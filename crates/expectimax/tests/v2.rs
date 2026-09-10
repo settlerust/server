@@ -212,7 +212,9 @@ fn learned_tables_seat_the_search_and_rank_true_states() {
         };
         let action = if actor == 0 && state.turn < 12 {
             let view = common::view(&state, actor, history.len() as u64);
-            let report = analyze_with(&view, &history, &config, None, &|| 0.0, &leaf).unwrap();
+            let mut cache = settlers_expectimax::v2::Cache::default();
+            let report =
+                analyze_with(&view, &history, &config, None, &|| 0.0, &leaf, &mut cache).unwrap();
             assert_eq!(report.policy, "expectimax-v2-tables");
             for c in &report.candidates {
                 assert!((c.contributions.total() - c.expected_value).abs() < 1e-6);
@@ -403,4 +405,111 @@ fn explain_mode_reports_expected_outcomes_with_probabilities() {
     // at deeper depths the outcome values carry the lookahead, so only finiteness is checked.
     let json = serde_json::to_string(&report).unwrap();
     assert!(json.contains("\"outcomes\""));
+}
+
+#[test]
+fn information_set_key_hides_hidden_state_and_sees_public_state() {
+    use settlers_expectimax::v2::key::information_set;
+    let (state, _) = common::fixture(4);
+    let base = information_set(&state, 0);
+    assert_eq!(base, information_set(&state, 0));
+    // Hidden: an opponent's hand composition at a fixed total, the deck composition at a fixed
+    // count, and the random cursor.
+    let mut hidden = state;
+    let hand = &mut hidden.players[2].resources;
+    if hand.total() > 0 {
+        let from = (0..5).find(|&r| hand.0[r] > 0).unwrap();
+        hand.0[from] -= 1;
+        hand.0[(from + 1) % 5] += 1;
+    }
+    let total: u8 = hidden.deck.iter().sum();
+    hidden.deck = [total, 0, 0, 0, 0];
+    hidden.random.word += 99;
+    assert_eq!(information_set(&hidden, 0), base);
+    // Visible: own hand, an opponent's hand total, the robber, the turn.
+    let mut own = state;
+    own.players[0].resources.0[0] += 1;
+    assert_ne!(information_set(&own, 0), base);
+    let mut total_changed = state;
+    total_changed.players[2].resources.0[0] += 1;
+    assert_ne!(information_set(&total_changed, 0), base);
+    let mut robber = state;
+    robber.robber = (robber.robber + 1) % 19;
+    assert_ne!(information_set(&robber, 0), base);
+    let mut turn = state;
+    turn.turn += 1;
+    assert_ne!(information_set(&turn, 0), base);
+    // The two words are independent: a changed position changes both.
+    assert_ne!(information_set(&own, 0).1, base.1);
+}
+
+#[test]
+fn shared_tables_within_a_decision_reproduce_fresh_tables_bit_for_bit() {
+    use settlers_expectimax::v2::{Cache, CacheMode};
+    let (mut state, history) = common::fixture(4);
+    let fresh = SearchConfig {
+        depth: 3,
+        node_budget: 50_000_000,
+        ..quick()
+    };
+    let shared = SearchConfig {
+        cache: CacheMode::Decision,
+        ..fresh.clone()
+    };
+    let mut cache = Cache::default();
+    let mut compared = 0;
+    let mut saved = 0u64;
+    let mut steps = 0;
+    while !matches!(state.phase, Phase::Finished { .. }) && steps < 1200 && compared < 40 {
+        steps += 1;
+        let actor = match state.phase {
+            Phase::Discard { pending } => pending.trailing_zeros() as u8,
+            _ => state.current,
+        };
+        let action = if actor == 0 {
+            let view = common::view(&state, actor, history.len() as u64);
+            let a = analyze(&view, &history, &fresh, None, &|| 0.0).unwrap();
+            let b = settlers_expectimax::v2::analyze_with(
+                &view,
+                &history,
+                &shared,
+                None,
+                &|| 0.0,
+                &settlers_expectimax::v2::Leaf::Hand,
+                &mut cache,
+            )
+            .unwrap();
+            assert_eq!(a.candidates.len(), b.candidates.len());
+            for (x, y) in a.candidates.iter().zip(&b.candidates) {
+                assert_eq!(x.command, y.command);
+                assert_eq!(
+                    x.expected_value.to_bits(),
+                    y.expected_value.to_bits(),
+                    "{:?}",
+                    x.command
+                );
+            }
+            assert_eq!(a.statistics.depth_completed, b.statistics.depth_completed);
+            assert!(b.statistics.transitions <= a.statistics.transitions);
+            saved += b.statistics.cached_transitions;
+            compared += 1;
+            match act(&state, actor, &a.candidates[0].command.clone().unwrap()) {
+                Some(a) => a,
+                None => continue,
+            }
+        } else {
+            settlers_expectimax::v2::opponent::act(&state, actor, 0)
+        };
+        state = match apply(&state, actor, action) {
+            Ok(next) => next,
+            Err(_) => apply(
+                &state,
+                actor,
+                *legal_actions(&state, actor).first().unwrap(),
+            )
+            .unwrap(),
+        };
+    }
+    assert!(compared >= 10, "{compared} decisions compared");
+    assert!(saved > 0, "shared tables never saved work");
 }

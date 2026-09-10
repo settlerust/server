@@ -1,7 +1,7 @@
 //! Seat adapters. Every adapter decides from a `GameView` plus its own event history.
 use serde::{Deserialize, Serialize};
 use settlers_engine::{Action, Phase, automatic_discard};
-use settlers_expectimax::v2::{Leaf, SearchConfig};
+use settlers_expectimax::v2::{Cache, Leaf, SearchConfig};
 use settlers_expectimax::{Config, analyze};
 use settlers_policies::trading::TradingPolicy;
 use settlers_policies::{Policy, eta_builder::EtaBuilder, fast_builder::FastBuilder};
@@ -53,6 +53,9 @@ fn summarize(report: &settlers_expectimax::Report) -> serde_json::Value {
         "per_level_afterstates": report.statistics.per_level_afterstates,
         "per_level_nodes": report.statistics.per_level_nodes,
         "transpositions": report.statistics.transpositions,
+        "cache_hits": report.statistics.cache_hits,
+        "cached_transitions": report.statistics.cached_transitions,
+        "cache_entries": report.statistics.cache_entries,
         "scenarios": report.statistics.scenarios,
         "candidates": report.candidates.iter().take(5).map(|c| serde_json::json!({
             "action": c.principal_variation.first(),
@@ -125,6 +128,7 @@ pub fn search_seat(config: SearchConfig, leaf: Leaf) -> Box<dyn Seat> {
     Box::new(TunableExpectimax {
         config,
         leaf,
+        cache: Cache::default(),
         offered_turn: None,
         effort: Effort::default(),
         last: None,
@@ -134,6 +138,7 @@ pub fn search_seat(config: SearchConfig, leaf: Leaf) -> Box<dyn Seat> {
 struct TunableExpectimax {
     config: SearchConfig,
     leaf: Leaf,
+    cache: Cache,
     offered_turn: Option<u32>,
     effort: Effort,
     last: Option<serde_json::Value>,
@@ -155,6 +160,7 @@ impl Seat for TunableExpectimax {
             self.offered_turn,
             &clock,
             &self.leaf,
+            &mut self.cache,
         ) {
             Ok(report) => {
                 self.effort.decision_nodes += report.statistics.own_nodes;

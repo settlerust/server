@@ -2,7 +2,7 @@
 //! participant event history delivered to this process.
 use crate::Policy;
 use settlers_engine::{Action, Observation};
-use settlers_expectimax::v2::SearchConfig;
+use settlers_expectimax::v2::{Cache, SearchConfig};
 use settlers_expectimax::{Config, Report};
 use settlers_protocol::{Command, EventBatch, GameView, PublicEvent};
 use std::collections::BTreeMap;
@@ -13,6 +13,7 @@ enum Engine {
 }
 pub struct ExpectimaxSeat {
     engine: Engine,
+    cache: Cache,
     history: BTreeMap<u64, EventBatch>,
     offered_turn: Option<u32>,
     name: &'static str,
@@ -42,11 +43,12 @@ impl ExpectimaxSeat {
                 "expectimax-v2"
             },
             engine,
+            cache: Cache::default(),
             history: BTreeMap::new(),
             offered_turn: None,
         })
     }
-    fn analyze(&self, view: &GameView) -> Result<Report, settlers_expectimax::SearchError> {
+    fn analyze(&mut self, view: &GameView) -> Result<Report, settlers_expectimax::SearchError> {
         let history: Vec<_> = self.history.values().cloned().collect();
         match &self.engine {
             Engine::Reference(config) => {
@@ -54,9 +56,16 @@ impl ExpectimaxSeat {
             }
             Engine::Tunable(config) => {
                 let started = std::time::Instant::now();
-                settlers_expectimax::v2::analyze(view, &history, config, self.offered_turn, &|| {
-                    started.elapsed().as_secs_f64() * 1000.0
-                })
+                let leaf = settlers_expectimax::v2::Leaf::from_config(config)?;
+                settlers_expectimax::v2::analyze_with(
+                    view,
+                    &history,
+                    config,
+                    self.offered_turn,
+                    &|| started.elapsed().as_secs_f64() * 1000.0,
+                    &leaf,
+                    &mut self.cache,
+                )
             }
         }
     }

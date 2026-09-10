@@ -122,6 +122,11 @@ pub struct Statistics {
     pub per_level_nodes: Vec<u64>,
     pub root_actions: u32,
     pub legal_actions: u32,
+    /// Transposition-table hits on entries from an earlier depth pass or decision, the
+    /// transitions they saved, and the table size after the search.
+    pub cache_hits: u64,
+    pub cached_transitions: u64,
+    pub cache_entries: u64,
 }
 /// One expected end-of-turn position of the chosen action: its probability along the chosen
 /// action, its value, and a public-safe summary of the seat's own position. Builds are listed

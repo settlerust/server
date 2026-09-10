@@ -222,6 +222,7 @@ reproducible bit for bit.
 | `deepen_fraction` | 0.3 | Deepen only while elapsed time is below this share of the budget |
 | `deepen_gap` | 0 | Stop deepening once the best candidate leads by this many leaf units; 0 disables |
 | `explain` | false | Report the expected end-of-turn outcomes of the chosen action with probabilities |
+| `cache` | `none` | Transposition tables: `none` per depth pass, `decision` across the passes of one decision, `turn` across the decisions of a turn |
 | `weights` | see below | Leaf weights |
 | `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
 
@@ -306,6 +307,33 @@ cargo run --release -p settlers-arena --bin train -- \
   --out runs/ntuple/full --layout hex,vertex,portfolio --wall-seconds 7200 \
   --chunk-games 40000 --validate-seeds 32 --plateau-window 3
 ```
+
+### Transposition tables
+
+Positions are keyed by the root seat's information set: everything its
+observation would show (board, roads, own hand and cards, bank, deck count,
+robber, awards, phase, turn, and the other seats' public counts), never a
+hidden hand or the random cursor. The key is a Zobrist-style combination of
+per-field mixes in two independent words; the second word verifies a hit so a
+table collision cannot return another position's value. Indistinguishable
+positions are merged at every branching point (dice outcomes, purchases,
+thefts, sampled hands, and the arrival positions after the opponents' round),
+in first-appearance order so that sums do not depend on the key function.
+
+Three tables are kept: turn plans (the static best line of a position, which
+does not depend on the depth), lookahead values (keyed by position, level, and
+depth cap), and the arrival positions of an opponents' round (keyed by
+position and level). `cache` decides their lifetime. With `none` they are
+rebuilt for every depth pass, as the original search did. With `decision`
+they are shared across the depth passes of one decision, so iterative
+deepening replans a turn and replays an opponents' round once; this
+reproduces `none` bit for bit whenever no node or time budget binds, and
+completes more of the tree when one does. With `turn` they persist across the
+decisions of the same turn, so after a move the next decision starts from a
+subtree the previous one explored; values computed under the earlier
+decisions' sampled hands are reused, which is an equally valid estimate but
+not the same bits. Reports count `cache_hits`, `cached_transitions` (the
+transitions the hits saved), and `cache_entries`.
 
 ### Explain mode
 

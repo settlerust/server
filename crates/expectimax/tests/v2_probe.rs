@@ -17,6 +17,7 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
         };
         if s.phase == Phase::Main && s.turn > 8 {
             let seat = p;
+            let mut cache = settlers_expectimax::v2::Cache::default();
             let mut search = Search::new(
                 seat,
                 Weights::default(),
@@ -33,6 +34,7 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
                 },
                 &never,
                 settlers_expectimax::v2::Leaf::Hand,
+                &mut cache,
             );
             let cands = search.candidates(&s, seat, 0);
             if cands.len() >= 3 {

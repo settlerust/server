@@ -10,6 +10,7 @@ use crate::search::{
     TradeAnalysis,
 };
 use crate::{sampling, trades};
+pub use search::Cache;
 use search::{Limits, Search, World};
 use serde::{Deserialize, Serialize};
 use settlers_engine::*;
@@ -149,6 +150,20 @@ pub struct SearchConfig {
     /// Explain mode: report the distribution of end-of-turn positions the chosen action leads
     /// to at every planned level, with probabilities. Costs memory, never changes the decision.
     pub explain: bool,
+    /// Transposition tables: `none` rebuilds them for every depth pass (the original search),
+    /// `decision` shares them across the depth passes of one decision, and `turn` keeps them
+    /// across every decision of the same turn. `decision` reproduces `none` bit for bit
+    /// whenever no node or time budget binds, and completes more of the tree when one does;
+    /// `turn` also reuses values computed under the earlier decisions' sampled hands.
+    pub cache: CacheMode,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheMode {
+    #[default]
+    None,
+    Decision,
+    Turn,
 }
 impl Default for SearchConfig {
     fn default() -> Self {
@@ -173,6 +188,7 @@ impl Default for SearchConfig {
             deepen_fraction: 0.3,
             deepen_gap: 0.0,
             explain: false,
+            cache: CacheMode::None,
         }
     }
 }
@@ -233,9 +249,19 @@ pub fn analyze(
     clock: &dyn Fn() -> f64,
 ) -> Result<Report, SearchError> {
     let leaf = Leaf::from_config(config)?;
-    analyze_with(view, history, config, offered_turn, clock, &leaf)
+    let mut cache = Cache::default();
+    analyze_with(
+        view,
+        history,
+        config,
+        offered_turn,
+        clock,
+        &leaf,
+        &mut cache,
+    )
 }
-/// `analyze` with an explicit leaf evaluator.
+/// `analyze` with an explicit leaf evaluator and the caller's transposition tables. The
+/// tables are cleared according to `config.cache` before the search runs.
 pub fn analyze_with(
     view: &GameView,
     history: &[EventBatch],
@@ -243,6 +269,7 @@ pub fn analyze_with(
     offered_turn: Option<u32>,
     clock: &dyn Fn() -> f64,
     leaf: &Leaf,
+    cache: &mut Cache,
 ) -> Result<Report, SearchError> {
     if view.research_hands.is_some() {
         return Err(SearchError::NotSeated);
@@ -284,11 +311,28 @@ pub fn analyze_with(
     }
     let root = &worlds[0].state;
     let my_turn = actor(root) == seat;
+    match config.cache {
+        CacheMode::None | CacheMode::Decision => cache.clear(),
+        CacheMode::Turn => {
+            if cache.owner != Some((root.turn, root.current)) {
+                cache.clear();
+                cache.owner = Some((root.turn, root.current));
+            }
+        }
+    }
     // Root actions come from the v2 generator; trade proposals and acceptances from the shared
     // enumerator. Discards get several candidates instead of the single automatic suggestion.
     let mut actions: Vec<Action> = Vec::new();
     if my_turn {
-        let probe = Search::new(seat, weights, config.limits(1), &|| false, leaf.clone());
+        let mut probe_cache = Cache::default();
+        let probe = Search::new(
+            seat,
+            weights,
+            config.limits(1),
+            &|| false,
+            leaf.clone(),
+            &mut probe_cache,
+        );
         actions = if matches!(root.phase, Phase::Discard { .. }) {
             Search::discard_candidates(root, seat, 4)
         } else {
@@ -311,12 +355,16 @@ pub fn analyze_with(
     let start_depth = if config.iterative { 1 } else { config.depth };
     let mut cumulative = search::Stats::default();
     for depth in start_depth..=max_depth {
+        if config.cache == CacheMode::None {
+            cache.clear();
+        }
         let mut search = Search::new(
             seat,
             weights,
             config.limits(depth),
             &over_time,
             leaf.clone(),
+            cache,
         );
         search.record = config.explain;
         let mut rows: Vec<Row> = Vec::new();
@@ -444,6 +492,8 @@ pub fn analyze_with(
         cumulative.transpositions += stats.transpositions;
         cumulative.scenarios += stats.scenarios;
         cumulative.own_nodes += stats.own_nodes;
+        cumulative.cache_hits += stats.cache_hits;
+        cumulative.cached_transitions += stats.cached_transitions;
         if search.aborted {
             cumulative.aborted = true;
             break;
@@ -458,7 +508,15 @@ pub fn analyze_with(
         Some(r) => r,
         None => {
             // Even a one-turn plan was cut off: rank by static leaf so play never stalls.
-            let mut search = Search::new(seat, weights, config.limits(1), &|| false, leaf.clone());
+            let mut fallback_cache = Cache::default();
+            let mut search = Search::new(
+                seat,
+                weights,
+                config.limits(1),
+                &|| false,
+                leaf.clone(),
+                &mut fallback_cache,
+            );
             let mut rows = Vec::new();
             for a in &actions {
                 let children = search.step(&worlds, seat, *a)?;
@@ -555,6 +613,9 @@ pub fn analyze_with(
             per_level_nodes: stats.per_level_nodes,
             root_actions: actions.len() as u32,
             legal_actions: o.legal_actions.len() as u32,
+            cache_hits: cumulative.cache_hits,
+            cached_transitions: cumulative.cached_transitions,
+            cache_entries: cache.entries() as u64,
         },
         assumptions: vec![
             "Depth counts the root player's planned turns; leaves are evaluated at the end of the deepest planned turn. Iterative deepening plays the deepest depth completed within the time and node budgets.".into(),
@@ -621,10 +682,38 @@ pub fn rank_state(
     leaf: &Leaf,
     depth: u8,
 ) -> Result<Vec<(Action, f64)>, SearchError> {
+    let mut cache = Cache::default();
+    rank_state_with(state, seat, config, leaf, depth, &mut cache)
+}
+/// `rank_state` with the caller's transposition tables, cleared according to `config.cache`.
+pub fn rank_state_with(
+    state: &State,
+    seat: u8,
+    config: &SearchConfig,
+    leaf: &Leaf,
+    depth: u8,
+    cache: &mut Cache,
+) -> Result<Vec<(Action, f64)>, SearchError> {
     let config = config.clone().bounded();
     let weights = config.inclinations.apply(config.weights);
     let never = || false;
-    let mut search = Search::new(seat, weights, config.limits(depth), &never, leaf.clone());
+    match config.cache {
+        CacheMode::None | CacheMode::Decision => cache.clear(),
+        CacheMode::Turn => {
+            if cache.owner != Some((state.turn, state.current)) {
+                cache.clear();
+                cache.owner = Some((state.turn, state.current));
+            }
+        }
+    }
+    let mut search = Search::new(
+        seat,
+        weights,
+        config.limits(depth),
+        &never,
+        leaf.clone(),
+        cache,
+    );
     let mut actions = if matches!(state.phase, Phase::Discard { .. }) {
         Search::discard_candidates(state, seat, 4)
     } else {
@@ -775,17 +864,23 @@ fn root_action(
     let children = search.step(worlds, seat, action)?;
     let mut total = leaf::Terms::default();
     let mut mass_total = 0.0;
-    let mut groups: std::collections::BTreeMap<u64, Vec<World>> = std::collections::BTreeMap::new();
+    // Groups in first-appearance order, independent of the key function (see `regroup`).
+    let mut index: std::collections::HashMap<key::Key, usize> = Default::default();
+    let mut groups: Vec<Vec<World>> = Vec::new();
     for w in children {
         if w.weight > 1e-12 {
-            groups
-                .entry(key::information_set(&w.state, seat))
-                .or_default()
-                .push(w);
+            let key = key::information_set(&w.state, seat);
+            match index.get(&key) {
+                Some(&i) => groups[i].push(w),
+                None => {
+                    index.insert(key, groups.len());
+                    groups.push(vec![w]);
+                }
+            }
         }
     }
-    let mass_all: f64 = groups.values().flatten().map(|w| w.weight).sum();
-    for (_, group) in groups {
+    let mass_all: f64 = groups.iter().flatten().map(|w| w.weight).sum();
+    for group in groups {
         let mass: f64 = group.iter().map(|w| w.weight).sum();
         search.path_mass = if mass_all > 0.0 { mass / mass_all } else { 1.0 };
         let valued = search.turn_value(group, 1, 1);

@@ -20,7 +20,9 @@ use settlers_arena::seats::search_seat;
 use settlers_arena::{SeatSpec, TableSettings, build_seat, play};
 use settlers_engine::*;
 use settlers_expectimax::ntuple::{Layout, MAX_ACTIVE, Model, UpdateStats};
-use settlers_expectimax::v2::{Leaf, LeafConfig, SearchConfig, opponent, rank_state};
+use settlers_expectimax::v2::{
+    Cache, CacheMode, Leaf, LeafConfig, SearchConfig, opponent, rank_state_with,
+};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
@@ -242,6 +244,9 @@ fn play_training_game(
         })
         .collect();
     let mut pending = [false; 4];
+    // Each seat keeps its transposition tables across the decisions of a turn; on the fully
+    // known training state this is bit-identical to a fresh search and saves the replanning.
+    let mut caches: [Cache; 4] = Default::default();
     let mut scratch = [0u32; MAX_ACTIVE];
     let mut steps = 0u32;
     let mut turn_key = (u32::MAX, 0u8);
@@ -264,7 +269,7 @@ fn play_training_game(
         } else if builder || (c.builder_mix > 0.0 && rng.unit() < c.builder_mix) {
             opponent::act(&s, p, turn_actions)
         } else {
-            match rank_state(&s, p, search, leaf, 1) {
+            match rank_state_with(&s, p, search, leaf, 1, &mut caches[p as usize]) {
                 Ok(ranked) if !ranked.is_empty() => {
                     if ranked.len() > 1 {
                         stats.searched += 1;
@@ -405,6 +410,7 @@ fn worker(
         depth: 1,
         propose: false,
         iterative: false,
+        cache: CacheMode::Turn,
         ..SearchConfig::default()
     };
     let mut rng = Rng(u64::from(c.train_seed)
