@@ -17,6 +17,17 @@ use std::collections::{BTreeMap, HashMap};
 
 /// Afterstate groups of one line of play with their probability masses.
 pub type Line = Vec<(f64, Vec<World>)>;
+/// One end-of-turn position the search expects, with its absolute probability along the
+/// current root action, its value, and the position itself (summarized before it leaves
+/// the process; a report never carries hidden hands).
+#[derive(Debug, Clone, Copy)]
+pub struct Outcome {
+    pub level: u8,
+    pub probability: f64,
+    pub value: f64,
+    pub state: State,
+}
+type Recorded = Vec<(f64, f64, State)>;
 #[derive(Debug, Clone, Copy)]
 pub struct World {
     pub state: State,
@@ -57,7 +68,12 @@ pub struct Search<'a> {
     pub aborted: bool,
     /// The leaf evaluator: hand-written terms or learned tables.
     pub model: Leaf,
-    memo: HashMap<(u64, u8), Terms>,
+    /// Explain mode: record every expected end-of-turn position with its probability.
+    pub record: bool,
+    /// Probability mass of the path from the root action to the current planned turn.
+    pub path_mass: f64,
+    pub outcomes: Vec<Outcome>,
+    memo: HashMap<(u64, u8), (Terms, Recorded)>,
     lines: HashMap<u64, (f64, Line)>,
 }
 const MAX_STEPS: u32 = 400;
@@ -176,8 +192,21 @@ impl<'a> Search<'a> {
             over_time,
             aborted: false,
             model,
+            record: false,
+            path_mass: 1.0,
+            outcomes: Vec::new(),
             memo: HashMap::new(),
             lines: HashMap::new(),
+        }
+    }
+    fn note_outcome(&mut self, level: u8, share: f64, value: f64, state: State) {
+        if self.record {
+            self.outcomes.push(Outcome {
+                level,
+                probability: self.path_mass * share,
+                value,
+                state,
+            });
         }
     }
     /// Static value of a position from seat `p`'s perspective under the configured leaf.
@@ -710,22 +739,41 @@ impl<'a> Search<'a> {
         steps: u32,
     ) -> Result<(Terms, Option<Action>), RuleError> {
         let key = (information_set(&worlds[0].state, self.seat), level);
-        if let Some(v) = self.memo.get(&key) {
+        if let Some((v, recorded)) = self.memo.get(&key) {
             self.stats.transpositions += 1;
-            return Ok((v.clone(), None));
+            let v = v.clone();
+            if self.record {
+                for &(share, value, state) in recorded.clone().iter() {
+                    self.note_outcome(level, share, value, state);
+                }
+            }
+            return Ok((v, None));
         }
         let worlds = Self::normalized(worlds);
         let (_, lines) = self.best_line(worlds.clone(), level, steps)?;
+        let mass_total: f64 = lines
+            .iter()
+            .filter(|(m, _)| *m > 1e-12)
+            .map(|(m, _)| m)
+            .sum();
         let mut total = Terms::default();
-        let mut mass_total = 0.0;
+        let mut recorded: Recorded = Vec::new();
         for (mass, group) in lines {
             if mass <= 1e-12 {
                 continue;
             }
             let group = Self::normalized(group);
-            let value = self.afterstate_value(&group, level)?;
+            let share = mass / mass_total;
+            let saved = self.path_mass;
+            self.path_mass *= share;
+            let value = self.afterstate_value(&group, level);
+            self.path_mass = saved;
+            let value = value?;
+            if self.record {
+                recorded.push((share, value.total(), group[0].state));
+                self.note_outcome(level, share, value.total(), group[0].state);
+            }
             total.add_scaled(&value, mass);
-            mass_total += mass;
         }
         if mass_total > 0.0 {
             total.scale(1.0 / mass_total);
@@ -733,7 +781,7 @@ impl<'a> Search<'a> {
             total = self.leaf(&worlds);
         }
         if !self.aborted {
-            self.memo.insert(key, total.clone());
+            self.memo.insert(key, (total.clone(), recorded));
         }
         Ok((total, None))
     }
@@ -893,12 +941,22 @@ impl<'a> Search<'a> {
             for (_, group) in self.regroup(arrived) {
                 let mass = Self::mass(&group);
                 let finished = matches!(group[0].state.phase, Phase::Finished { .. });
+                let share = mass / count as f64;
                 let value = if finished || level + 1 > self.limits.depth {
-                    self.leaf(&Self::normalized(group))
+                    let state = group[0].state;
+                    let value = self.leaf(&Self::normalized(group));
+                    if finished && level < self.limits.depth {
+                        self.note_outcome(level + 1, share, value.total(), state);
+                    }
+                    value
                 } else {
-                    self.plan(group, level + 1)?.0
+                    let saved = self.path_mass;
+                    self.path_mass *= share;
+                    let planned = self.plan(group, level + 1);
+                    self.path_mass = saved;
+                    planned?.0
                 };
-                total.add_scaled(&value, mass / count as f64);
+                total.add_scaled(&value, share);
             }
         }
         Ok(total)

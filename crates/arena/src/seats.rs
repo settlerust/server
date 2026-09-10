@@ -60,6 +60,7 @@ fn summarize(report: &settlers_expectimax::Report) -> serde_json::Value {
             "value": c.expected_value,
             "contributions": c.contributions,
         })).collect::<Vec<_>>(),
+        "outcomes": report.outcomes,
     })
 }
 

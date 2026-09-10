@@ -123,6 +123,32 @@ pub struct Statistics {
     pub root_actions: u32,
     pub legal_actions: u32,
 }
+/// One expected end-of-turn position of the chosen action: its probability along the chosen
+/// action, its value, and a public-safe summary of the seat's own position. Builds are listed
+/// relative to the root position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeSummary {
+    pub probability: f64,
+    pub value: f64,
+    pub turn: u32,
+    pub points: u8,
+    pub hand: u16,
+    pub settlements: Vec<u8>,
+    pub cities: Vec<u8>,
+    pub roads: Vec<u8>,
+    pub development: u8,
+    /// Set when the game has ended by then: whether this seat won.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub won: Option<bool>,
+}
+/// Expected outcomes of the chosen action at one planned level (1 = the end of this turn).
+/// `other` is the probability mass of outcomes beyond the listed ones.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeLevel {
+    pub level: u8,
+    pub groups: Vec<OutcomeSummary>,
+    pub other: f64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     pub policy: String,
@@ -139,6 +165,9 @@ pub struct Report {
     pub top_ids: Vec<String>,
     pub statistics: Statistics,
     pub assumptions: Vec<String>,
+    /// Explain mode: the distribution of end-of-turn positions the chosen action leads to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcomes: Option<Vec<OutcomeLevel>>,
 }
 #[derive(Clone, Copy)]
 struct World {
@@ -359,6 +388,7 @@ pub fn analyze(
             "Trade acceptance is sampled affordability times modeled willingness when affordable. Public bank abundance constrains circulating supply, not willingness; a full bank means nobody holds that resource. Acceptance remains uncalibrated.".into(),
             "Contributions sum to expected value; they are additive heuristic terms, not SHAP or causal explanations. Min/max are sampled leaf extrema, not guarantees.".into(),
         ],
+        outcomes: None,
     })
 }
 

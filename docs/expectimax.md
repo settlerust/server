@@ -199,8 +199,13 @@ evaluated at the end of the deepest planned turn.
 Iterative deepening runs depth 1, 2, and so on up to `depth`, and plays the
 deepest depth that completed within `time_budget_ms` and `node_budget`. A depth
 is abandoned as soon as either budget runs out; deepening also stops early when
-the elapsed time exceeds 30% of the budget, because the next depth costs several
-times more. With `time_budget_ms: 0` only the node budget applies and reports are
+the elapsed time exceeds `deepen_fraction` of the budget (default 0.3), because
+the next depth costs several times more. Two decision-aware rules spend depth
+where it matters: a position with a single candidate never deepens past the
+first depth, and with `deepen_gap` above zero deepening stops as soon as the
+best candidate leads the runner-up by at least that many leaf units (a settled
+decision), so close decisions get the deep search and clear ones do not. With
+`time_budget_ms: 0` only the node budget and the gap rule apply and reports are
 reproducible bit for bit.
 
 | Setting | Default | Meaning |
@@ -214,6 +219,9 @@ reproducible bit for bit.
 | `beam` | 4 | Reserved; later steps of the current turn keep three, two, then one action |
 | `afterstates` | 96 | Reserved cap on end-of-turn positions per planned turn |
 | `iterative` | true | Iterative deepening; false searches only `depth` |
+| `deepen_fraction` | 0.3 | Deepen only while elapsed time is below this share of the budget |
+| `deepen_gap` | 0 | Stop deepening once the best candidate leads by this many leaf units; 0 disables |
+| `explain` | false | Report the expected end-of-turn outcomes of the chosen action with probabilities |
 | `weights` | see below | Leaf weights |
 | `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
 
@@ -298,6 +306,23 @@ cargo run --release -p settlers-arena --bin train -- \
   --out runs/ntuple/full --layout hex,vertex,portfolio --wall-seconds 7200 \
   --chunk-games 40000 --validate-seeds 32 --plateau-window 3
 ```
+
+### Explain mode
+
+With `explain: true` a report carries `outcomes`: for the chosen plain action,
+one list per planned level of the end-of-turn positions the search expects,
+each with its probability along that action (dice, purchases, thefts, and
+sampled hands inside the turn, and the common random scenarios of the
+opponents' round between turns), the value assigned to it, and a public-safe
+summary relative to the root position: the turn, own points, hand size,
+settlements, cities, and roads gained, development cards bought, and whether
+the game has ended and who won. Level 1 is the end of the current turn, level 2
+the end of the next own turn, and so on; positions reached by different orders
+or scenarios are merged by information set, the twelve most likely are listed,
+and `other` holds the remaining mass. Explain mode never changes the decision
+or the values; it records positions the search would have discarded, so it
+costs memory and is off by default. The arena's `--trace` output carries the
+outcomes for every recorded decision.
 
 ### Browser defaults
 

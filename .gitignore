@@ -33,3 +33,4 @@ lcov.info
 *.pfx
 !crates/server/tests/fixtures/jwt-test-private.pem
 .DS_Store
+runs/

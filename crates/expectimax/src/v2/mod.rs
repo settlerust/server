@@ -5,7 +5,10 @@ pub mod leaf;
 pub mod opponent;
 pub mod search;
 pub mod weights;
-use crate::search::{Candidate, Contributions, Report, SearchError, Statistics, TradeAnalysis};
+use crate::search::{
+    Candidate, Contributions, OutcomeLevel, OutcomeSummary, Report, SearchError, Statistics,
+    TradeAnalysis,
+};
 use crate::{sampling, trades};
 use search::{Limits, Search, World};
 use serde::{Deserialize, Serialize};
@@ -136,6 +139,16 @@ pub struct SearchConfig {
     pub reciprocity: bool,
     /// Leaf evaluator: hand-written terms by default, or learned n-tuple tables.
     pub leaf: LeafConfig,
+    /// Iterative deepening continues only while the elapsed time is below this fraction of
+    /// the budget, because the next depth costs several times more.
+    pub deepen_fraction: f64,
+    /// Decision-aware deepening: once the best candidate leads the runner-up by at least this
+    /// many leaf units the decision is treated as settled and deepening stops. Zero disables
+    /// the rule. A position with a single candidate never deepens past the first depth.
+    pub deepen_gap: f64,
+    /// Explain mode: report the distribution of end-of-turn positions the chosen action leads
+    /// to at every planned level, with probabilities. Costs memory, never changes the decision.
+    pub explain: bool,
 }
 impl Default for SearchConfig {
     fn default() -> Self {
@@ -157,6 +170,9 @@ impl Default for SearchConfig {
             propose: true,
             reciprocity: false,
             leaf: LeafConfig::default(),
+            deepen_fraction: 0.3,
+            deepen_gap: 0.0,
+            explain: false,
         }
     }
 }
@@ -173,6 +189,8 @@ impl SearchConfig {
         self.inclinations = self.inclinations.clamped();
         self.leaf.scale = self.leaf.scale.clamp(1.0, 1_000_000.0);
         self.leaf.hand = self.leaf.hand.clamp(0.0, 10.0);
+        self.deepen_fraction = self.deepen_fraction.clamp(0.01, 1.0);
+        self.deepen_gap = self.deepen_gap.clamp(0.0, 1_000_000.0);
         self
     }
     fn limits(&self, depth: u8) -> Limits {
@@ -194,6 +212,8 @@ struct RootValue {
     trade: Option<TradeAnalysis>,
 }
 type Row = (Option<settlers_protocol::Command>, Action, RootValue);
+/// A completed depth: rows, statistics, and the recorded outcomes per plain action.
+type Completed = (u8, Vec<Row>, search::Stats, Vec<Vec<search::Outcome>>);
 fn actor(s: &State) -> u8 {
     if let Phase::Discard { pending } = s.phase {
         pending.trailing_zeros() as u8
@@ -286,7 +306,7 @@ pub fn analyze_with(
     }
     let deadline_ms = config.time_budget_ms;
     let over_time = || deadline_ms > 0.0 && clock() >= deadline_ms;
-    let mut best_report: Option<(u8, Vec<Row>, search::Stats)> = None;
+    let mut best_report: Option<Completed> = None;
     let max_depth = config.depth;
     let start_depth = if config.iterative { 1 } else { config.depth };
     let mut cumulative = search::Stats::default();
@@ -298,10 +318,13 @@ pub fn analyze_with(
             &over_time,
             leaf.clone(),
         );
+        search.record = config.explain;
         let mut rows: Vec<Row> = Vec::new();
+        let mut recorded: Vec<Vec<search::Outcome>> = Vec::new();
         let mut best_plain: Option<f64> = None;
         for a in &actions {
             let value = root_action(&mut search, &worlds, seat, *a, depth)?;
+            recorded.push(std::mem::take(&mut search.outcomes));
             if search.aborted {
                 break;
             }
@@ -425,12 +448,13 @@ pub fn analyze_with(
             cumulative.aborted = true;
             break;
         }
-        best_report = Some((depth, rows, stats));
-        if deadline_ms > 0.0 && clock() > deadline_ms * 0.3 {
+        let settled = settled_decision(&rows, config.deepen_gap);
+        best_report = Some((depth, rows, stats, recorded));
+        if settled || (deadline_ms > 0.0 && clock() > deadline_ms * config.deepen_fraction) {
             break;
         }
     }
-    let (depth_completed, rows, stats) = match best_report {
+    let (depth_completed, rows, stats, recorded) = match best_report {
         Some(r) => r,
         None => {
             // Even a one-turn plan was cut off: rank by static leaf so play never stalls.
@@ -445,9 +469,27 @@ pub fn analyze_with(
                     RootValue { value, trade: None },
                 ));
             }
-            (0, rows, std::mem::take(&mut search.stats))
+            (0, rows, std::mem::take(&mut search.stats), Vec::new())
         }
     };
+    // The chosen plain action's expected outcomes, when explain mode recorded them.
+    let mut outcomes = None;
+    if config.explain {
+        let best = rows
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i < recorded.len())
+            .max_by(|a, b| a.1.2.value.total().total_cmp(&b.1.2.value.total()));
+        let overall = rows
+            .iter()
+            .map(|r| r.2.value.total())
+            .fold(f64::NEG_INFINITY, f64::max);
+        if let Some((i, row)) = best
+            && row.2.value.total() >= overall - 1e-9
+        {
+            outcomes = Some(summarize_outcomes(root, seat, &recorded[i], 12));
+        }
+    }
     let mut candidates: Vec<Candidate> = rows
         .into_iter()
         .map(|(command, action, root)| Candidate {
@@ -491,6 +533,7 @@ pub fn analyze_with(
         knowledge,
         candidates,
         top_ids,
+        outcomes,
         statistics: Statistics {
             decision_nodes: stats.own_nodes,
             chance_branches: stats.scenarios,
@@ -599,6 +642,120 @@ pub fn rank_state(
     }
     Ok(out)
 }
+/// Group recorded outcomes by level and by what the seat has by then (builds, cards, points,
+/// game end), summing probabilities, and summarize the most likely `cap` per level relative
+/// to the root position. Hands are averaged, so a researcher reads "a city at 19 and a road,
+/// with probability p" rather than one entry per sampled hand.
+fn summarize_outcomes(
+    root: &State,
+    seat: u8,
+    outcomes: &[search::Outcome],
+    cap: usize,
+) -> Vec<OutcomeLevel> {
+    type Signature = (u32, u8, Vec<u8>, Vec<u8>, Vec<u8>, u8, Option<bool>);
+    type Groups = std::collections::BTreeMap<Signature, (f64, f64, f64, OutcomeSummary)>;
+    let own_root = root.players[seat as usize];
+    let root_dev: u8 = (0..5)
+        .map(|i| own_root.development[i] + own_root.new_development[i])
+        .sum();
+    let describe = |s: &State| -> OutcomeSummary {
+        let own = s.players[seat as usize];
+        let mut settlements = Vec::new();
+        let mut cities = Vec::new();
+        for v in 0..54u8 {
+            let before = root.board.building(v);
+            let after = s.board.building(v);
+            if after == seat + 1 && before != seat + 1 {
+                settlements.push(v);
+            }
+            if after == seat + 5 && before != seat + 5 {
+                cities.push(v);
+            }
+        }
+        let roads: Vec<u8> = (0..72u8)
+            .filter(|&e| s.board.road(e) == Some(seat) && root.board.road(e) != Some(seat))
+            .collect();
+        let dev: u8 = (0..5)
+            .map(|i| own.development[i] + own.new_development[i])
+            .sum();
+        OutcomeSummary {
+            probability: 0.0,
+            value: 0.0,
+            turn: s.turn,
+            points: points(s, seat),
+            hand: own.resources.total(),
+            settlements,
+            cities,
+            roads,
+            development: dev.saturating_sub(root_dev),
+            won: match s.phase {
+                Phase::Finished { winner } => Some(winner == seat),
+                _ => None,
+            },
+        }
+    };
+    let mut levels: std::collections::BTreeMap<u8, Groups> = Default::default();
+    for o in outcomes {
+        let summary = describe(&o.state);
+        let signature: Signature = (
+            summary.turn,
+            summary.points,
+            summary.settlements.clone(),
+            summary.cities.clone(),
+            summary.roads.clone(),
+            summary.development,
+            summary.won,
+        );
+        let hand = f64::from(summary.hand);
+        let entry = levels
+            .entry(o.level)
+            .or_default()
+            .entry(signature)
+            .or_insert((0.0, 0.0, 0.0, summary));
+        entry.0 += o.probability;
+        entry.1 += o.probability * o.value;
+        entry.2 += o.probability * hand;
+    }
+    levels
+        .into_iter()
+        .map(|(level, groups)| {
+            let mut list: Vec<(f64, f64, f64, OutcomeSummary)> = groups.into_values().collect();
+            list.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let total: f64 = list.iter().map(|g| g.0).sum();
+            let shown: Vec<OutcomeSummary> = list
+                .into_iter()
+                .take(cap)
+                .map(|(probability, weighted, hands, mut summary)| {
+                    summary.probability = probability;
+                    if probability > 0.0 {
+                        summary.value = weighted / probability;
+                        summary.hand = (hands / probability).round() as u16;
+                    }
+                    summary
+                })
+                .collect();
+            let listed: f64 = shown.iter().map(|g| g.probability).sum();
+            OutcomeLevel {
+                level,
+                groups: shown,
+                other: (total - listed).max(0.0),
+            }
+        })
+        .collect()
+}
+/// Whether deepening can stop: nothing to choose between, or the best candidate leads the
+/// runner-up by at least `gap` leaf units (when the rule is on).
+fn settled_decision(rows: &[Row], gap: f64) -> bool {
+    if rows.len() < 2 {
+        return true;
+    }
+    if gap <= 0.0 {
+        return false;
+    }
+    let mut values: Vec<f64> = rows.iter().map(|r| r.2.value.total()).collect();
+    values.sort_by(|a, b| b.total_cmp(a));
+    values[0] - values[1] >= gap
+}
 fn normalize(mut worlds: Vec<World>) -> Vec<World> {
     let mass: f64 = worlds.iter().map(|w| w.weight).sum();
     if mass > 0.0 {
@@ -627,9 +784,13 @@ fn root_action(
                 .push(w);
         }
     }
+    let mass_all: f64 = groups.values().flatten().map(|w| w.weight).sum();
     for (_, group) in groups {
         let mass: f64 = group.iter().map(|w| w.weight).sum();
-        let (value, _) = search.turn_value(group, 1, 1)?;
+        search.path_mass = if mass_all > 0.0 { mass / mass_all } else { 1.0 };
+        let valued = search.turn_value(group, 1, 1);
+        search.path_mass = 1.0;
+        let (value, _) = valued?;
         total.add_scaled(&value, mass);
         mass_total += mass;
     }

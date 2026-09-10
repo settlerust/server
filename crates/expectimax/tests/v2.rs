@@ -267,3 +267,140 @@ fn learned_tables_seat_the_search_and_rank_true_states() {
             .is_hand()
     );
 }
+
+#[test]
+fn deepening_stops_on_settled_decisions() {
+    // A roll-phase root with one candidate completes depth 1 only, whatever the cap.
+    let (mut state, history) = common::fixture(4);
+    let mut steps = 0;
+    while !(state.phase == Phase::Roll
+        && state.current == 0
+        && state.players[0].development[0] == 0
+        && state.turn > 8)
+        && steps < 2000
+    {
+        let actor = match state.phase {
+            Phase::Discard { pending } => pending.trailing_zeros() as u8,
+            _ => state.current,
+        };
+        let a = settlers_expectimax::v2::opponent::act(&state, actor, 0);
+        state = apply(&state, actor, a).unwrap_or_else(|_| {
+            apply(
+                &state,
+                actor,
+                *legal_actions(&state, actor).first().unwrap(),
+            )
+            .unwrap()
+        });
+        steps += 1;
+    }
+    assert_eq!(state.phase, Phase::Roll);
+    let view = common::view(&state, 0, history.len() as u64);
+    let deep = SearchConfig {
+        depth: 3,
+        ..quick()
+    };
+    let report = analyze(&view, &history, &deep, None, &|| 0.0).unwrap();
+    assert_eq!(report.candidates.len(), 1);
+    assert_eq!(report.statistics.depth_completed, 1);
+    // A wide gap rule settles a main-phase decision at depth 1; no rule deepens to the cap.
+    let mut main = state;
+    let mut steps = 0;
+    while !(main.phase == Phase::Main && main.current == 0) && steps < 500 {
+        let actor = match main.phase {
+            Phase::Discard { pending } => pending.trailing_zeros() as u8,
+            _ => main.current,
+        };
+        let a = settlers_expectimax::v2::opponent::act(&main, actor, 0);
+        main = apply(&main, actor, a).unwrap_or_else(|_| {
+            apply(&main, actor, *legal_actions(&main, actor).first().unwrap()).unwrap()
+        });
+        steps += 1;
+    }
+    let view = common::view(&main, 0, history.len() as u64);
+    let settled = analyze(
+        &view,
+        &history,
+        &SearchConfig {
+            depth: 3,
+            deepen_gap: 1e-9,
+            ..quick()
+        },
+        None,
+        &|| 0.0,
+    )
+    .unwrap();
+    let open = analyze(&view, &history, &deep, None, &|| 0.0).unwrap();
+    assert!(settled.candidates.len() >= 2);
+    assert_eq!(settled.statistics.depth_completed, 1);
+    assert_eq!(open.statistics.depth_completed, 3);
+}
+
+#[test]
+fn explain_mode_reports_expected_outcomes_with_probabilities() {
+    let (mut state, history) = common::fixture(4);
+    let mut steps = 0;
+    while !(state.phase == Phase::Main && state.current == 0 && state.turn > 12) && steps < 3000 {
+        let actor = match state.phase {
+            Phase::Discard { pending } => pending.trailing_zeros() as u8,
+            _ => state.current,
+        };
+        let a = settlers_expectimax::v2::opponent::act(&state, actor, 0);
+        state = apply(&state, actor, a).unwrap_or_else(|_| {
+            apply(
+                &state,
+                actor,
+                *legal_actions(&state, actor).first().unwrap(),
+            )
+            .unwrap()
+        });
+        steps += 1;
+    }
+    let view = common::view(&state, 0, history.len() as u64);
+    let plain = analyze(&view, &history, &quick(), None, &|| 0.0).unwrap();
+    let config = SearchConfig {
+        explain: true,
+        ..quick()
+    };
+    let report = analyze(&view, &history, &config, None, &|| 0.0).unwrap();
+    // Explain mode never changes the decision or the values.
+    assert_eq!(report.candidates[0].command, plain.candidates[0].command);
+    assert!(
+        (report.candidates[0].expected_value - plain.candidates[0].expected_value).abs() < 1e-9
+    );
+    assert!(plain.outcomes.is_none());
+    let outcomes = report.outcomes.clone().expect("outcomes recorded");
+    assert_eq!(outcomes.len(), report.statistics.depth_completed as usize);
+    for level in &outcomes {
+        let mass: f64 = level.groups.iter().map(|g| g.probability).sum::<f64>() + level.other;
+        assert!(
+            (mass - 1.0).abs() < 1e-6,
+            "level {} mass {mass}",
+            level.level
+        );
+        assert!(!level.groups.is_empty());
+        for g in &level.groups {
+            assert!(g.probability > 0.0 && g.probability <= 1.0 + 1e-9);
+            assert!(g.value.is_finite());
+            assert!(g.turn >= state.turn);
+        }
+        let mut sorted = level
+            .groups
+            .iter()
+            .map(|g| g.probability)
+            .collect::<Vec<_>>();
+        sorted.sort_by(|a, b| b.total_cmp(a));
+        assert_eq!(
+            sorted,
+            level
+                .groups
+                .iter()
+                .map(|g| g.probability)
+                .collect::<Vec<_>>()
+        );
+    }
+    // The first level's mean value over outcomes is the chosen candidate's value at depth 1:
+    // at deeper depths the outcome values carry the lookahead, so only finiteness is checked.
+    let json = serde_json::to_string(&report).unwrap();
+    assert!(json.contains("\"outcomes\""));
+}

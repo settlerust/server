@@ -62,6 +62,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut every = 7u32;
     let mut depths: Vec<u8> = vec![1, 2, 3];
     let mut time_budget = 0.0;
+    let mut leaf: Option<String> = None;
     let mut out: Option<String> = None;
     let mut views: Option<String> = None;
     let mut threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -81,12 +82,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .collect::<Result<_, _>>()?
             }
             "--time" => time_budget = value.parse()?,
+            "--leaf" => leaf = Some(value),
             "--threads" => threads = value.parse()?,
             "--out" => out = Some(value),
             "--views" => views = Some(value),
             _ => {
                 eprintln!(
-                    "usage: structure --seeds A-B [--every N] [--depths 1,2,3] [--time MS] [--threads N] --out FILE [--views FILE]"
+                    "usage: structure --seeds A-B [--every N] [--depths 1,2,3] [--time MS] [--leaf TABLES] [--threads N] --out FILE [--views FILE]"
                 );
                 std::process::exit(2)
             }
@@ -147,7 +149,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 writeln!(w.lock().unwrap(), "{line}").unwrap();
                             }
                             for &depth in &depths {
-                                let config = SearchConfig { depth, time_budget_ms: time_budget, iterative: false, ..SearchConfig::default() };
+                                let config = SearchConfig {
+                                    depth,
+                                    time_budget_ms: time_budget,
+                                    iterative: false,
+                                    leaf: settlers_expectimax::v2::LeafConfig { tables: leaf.clone(), ..Default::default() },
+                                    ..SearchConfig::default()
+                                };
                                 let started = std::time::Instant::now();
                                 let clock = || started.elapsed().as_secs_f64() * 1000.0;
                                 if let Ok(report) = analyze(&v, &histories[p as usize], &config, None, &clock) {
