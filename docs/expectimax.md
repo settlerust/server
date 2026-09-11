@@ -516,8 +516,11 @@ Seat specs are `fast`, `eta`, `legal`, `v1`, `v2`, or `v1:{json}` and
 the search with learned tables. Output is one JSON line per game with
 the winner, per-seat points, builds, trades, discards, decision timing, and search
 effort; `--trace` adds each search seat's top candidates per decision. Player
-trades are resolved by asking each recipient in seat order; the first acceptance
-commits. This arena is a development and diagnostic tier. It is not the
+trades are resolved by asking each recipient in turn, starting from a seat that
+rotates with the seed and version so that no slot is always asked first; the
+first acceptance commits. The rotation did not remove the seating term between
+two searches in slots 0 and 1 (a null pair still differs by +0.180 wins per
+game), so two-search contrasts are measured as swapped pairs. This arena is a development and diagnostic tier. It is not the
 authoritative protocol arena, and results from it are labelled as engine-arena
 evidence in the research repository.
 
