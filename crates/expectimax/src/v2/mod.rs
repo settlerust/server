@@ -189,6 +189,17 @@ pub struct SearchConfig {
     pub endgame: weights::EndgameConfig,
     /// Robber candidate scoring switches; see `RobberConfig`.
     pub robber: RobberConfig,
+    /// Development-card timing mechanisms, one switch per hypothesis, all off by default.
+    /// `knight_play_value` values played knights in the hand-written leaf by largest-army
+    /// distance (two away, one away, taking it) instead of the flat `knight` weight, and
+    /// credits a held playable knight with one roll of the production it would unblock.
+    /// `buy_tempo` offers a development purchase only when no road, settlement, or city is
+    /// affordable within the next own turn at current production. `hold_knight` offers
+    /// main-phase knight plays only when the robber sits on this seat's best hex, so the
+    /// knight is held to be played before the roll; the roll phase keeps the choice.
+    pub knight_play_value: bool,
+    pub buy_tempo: bool,
+    pub hold_knight: bool,
 }
 /// Build prediction switches. Each is off by default, reproducing the search exactly.
 /// `opponents` makes the lookahead's opponent model execute each opponent's predicted next
@@ -268,6 +279,9 @@ impl Default for SearchConfig {
             predict: PredictConfig::default(),
             endgame: weights::EndgameConfig::default(),
             robber: RobberConfig::default(),
+            knight_play_value: false,
+            buy_tempo: false,
+            hold_knight: false,
         }
     }
 }
@@ -313,6 +327,9 @@ impl SearchConfig {
             robber: self.robber,
             expected_hands: None,
             predict_threat: self.predict.threat,
+            knight_play_value: self.knight_play_value,
+            buy_tempo: self.buy_tempo,
+            hold_knight: self.hold_knight,
         }
     }
 }

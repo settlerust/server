@@ -85,6 +85,15 @@ pub struct SeatRecord {
     pub cities_built: u32,
     pub roads_built: u32,
     pub development_bought: u32,
+    /// Knight cards played (a subset of played development cards).
+    #[serde(default)]
+    pub knights_played: u32,
+    /// Times this seat gained the largest army.
+    #[serde(default)]
+    pub army_awards: u32,
+    /// Turn of this seat's first city, when it built one.
+    #[serde(default)]
+    pub first_city_turn: Option<u32>,
     pub bank_trades: u32,
     pub player_trades: u32,
     pub cards_discarded: u32,
@@ -296,12 +305,27 @@ impl Table {
                 Event::BuiltSettlement { player, .. } if self.state.turn > 0 => {
                     records[player as usize].settlements_built += 1
                 }
-                Event::BuiltCity { player, .. } => records[player as usize].cities_built += 1,
+                Event::BuiltCity { player, .. } => {
+                    records[player as usize].cities_built += 1;
+                    records[player as usize]
+                        .first_city_turn
+                        .get_or_insert(self.state.turn);
+                }
                 Event::BuiltRoad { player, .. } if self.state.turn > 0 => {
                     records[player as usize].roads_built += 1
                 }
                 Event::BoughtDevelopment { player } => {
                     records[player as usize].development_bought += 1
+                }
+                Event::PlayedDevelopment {
+                    player,
+                    card: Development::Knight,
+                } => records[player as usize].knights_played += 1,
+                Event::AwardsChanged {
+                    largest_army: Some(holder),
+                    ..
+                } if self.state.largest_army != Some(holder) => {
+                    records[holder as usize].army_awards += 1
                 }
                 Event::BankTraded { player, .. } => records[player as usize].bank_trades += 1,
                 Event::Traded { player, other, .. } => {

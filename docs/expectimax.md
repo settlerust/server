@@ -226,6 +226,9 @@ reproducible bit for bit.
 | `weights` | see below | Leaf weights |
 | `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
 | `endgame` | all off | Endgame switches: race leaf, hidden victory points, late leader bias |
+| `knight_play_value` | false | Played knights valued by largest-army distance, and a held knight credited with the production it unblocks |
+| `buy_tempo` | false | A development purchase is a candidate only when no build is affordable within the next own turn |
+| `hold_knight` | false | Main-phase knight plays only when the robber sits on this seat's best hex |
 
 ### Leaf
 
@@ -295,6 +298,23 @@ placements score the leader's blocked production and stolen cards with
 leader's route to the best site both seats contest score half that site's
 discounted value per three roads of denial, once the game is past `block_from` of
 its estimated `turns_per_player` length.
+
+### Development-card timing switches
+
+Three development-card switches change how the search values and times cards; each is one
+registered mechanism and defaults to the behaviour above. They apply to the hand-written
+leaf and its candidate generator; a tables leaf ignores them. With `knight_play_value` the
+development term replaces the flat `knight` per played knight with a largest-army schedule:
+half the weight when three or more knights from taking the award, the full weight at two
+away, 1.75 times at one away, and 1.25 times while holding it; a held playable knight is
+also credited with one roll of the production it would unblock, so a knight held against a
+robber on this seat's own hex is worth more. With `buy_tempo` a development purchase is
+generated only when no road, settlement, or city is affordable within the next own turn at
+current production (the leaf's acquisition-time estimate), making the buy a fallback for
+stalls rather than a competitor to visible builds. With `hold_knight` a main-phase knight
+play is generated only when the robber sits on this seat's best-producing hex, so knights
+are kept for the before-the-roll unblock; the roll phase keeps both choices, and the search
+still decides whether the play is worth it there.
 
 Contributions in a report are the mass-weighted sums of these terms across the
 expanded continuations. The reported `statistics` include transitions, leaves,
@@ -610,7 +630,8 @@ cargo run --release -p settlers-arena --bin tournament -- \
 Seat specs are `fast`, `eta`, `legal`, `v1`, `v2`, or `v1:{json}` and
 `v2:{json}` with a configuration object; `v2:{"leaf":{"tables":"PATH"}}` seats
 the search with learned tables. Output is one JSON line per game with
-the winner, per-seat points, builds, trades, discards, decision timing, and search
+the winner, per-seat points, builds, development cards bought, knights played, largest-army
+awards gained, the turn of the first city, trades, discards, decision timing, and search
 effort; `--trace` adds each search seat's top candidates per decision. Player
 trades are resolved by asking each recipient in turn, starting from a seat that
 rotates with the seed and version so that no slot is always asked first; the
