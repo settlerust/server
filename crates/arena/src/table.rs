@@ -383,7 +383,13 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                 );
                 let mut winner = None;
                 let mut countered = false;
+                // Ask the recipients starting from a rotating seat rather than always the
+                // seat after the offerer: with two bargaining seats, asking the next seat
+                // first gave it the first acceptance and a measurable edge (a seating
+                // term of +0.05 to +0.18 wins per game between identical seats).
                 let mut order: Vec<u8> = (1..n as u8).map(|k| (p + k) % n as u8).collect();
+                let shift = (table.seed as usize + t.version as usize) % order.len().max(1);
+                order.rotate_left(shift);
                 order.retain(|r| offer.to.contains(r));
                 for r in order {
                     let ri = r as usize;
