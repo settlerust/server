@@ -423,10 +423,13 @@ does not depend on `bargain`.
 The arms were measured on 2026-09-11 in the engine arena at depth 2 with an
 ETA and a fast builder, the changed seat in slot 0 and the default in slot 1
 (the research notebook's `reports/bargaining-arms.mdx` has the run IDs). That
-design carries a seating bias: two identical defaults in slots 0 and 1 differ
+design carries a seating term: two identical defaults in slots 0 and 1 differ
 by +0.176 wins per game (interval +0.083 to +0.268) on boards 0 to 63, because
-slot 1 always sits one seat after slot 0 and is asked first on its offers while
-slot 0 is asked last on slot 1's. Against that null, `threat_pricing: false`
+slot 1 always sits one seat after slot 0 and the seat directly before another
+acts first after three of the four rolls in a round (the research notebook's
+`reports/arena-seating.mdx`: the term survives `bargain: false`, `propose:
+false`, `counters: false`, `asks: false`, and identical builders, and
+disappears with a builder between the two searches). Against that null, `threat_pricing: false`
 changes nothing (−0.008), `counters: false` costs −0.199, `asks: false` costs
 −0.156, `bargain: false` costs −0.297, and the seat with `accept_asks: false`
 is +0.059 better than an identical default would be, so refusing asks costs
