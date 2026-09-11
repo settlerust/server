@@ -124,6 +124,132 @@ fn actor(s: &State) -> u8 {
         s.current
     }
 }
+/// The points leader to slow down, when the late-game endgame switch is armed: past
+/// `block_from` of the estimated game length, the opponent with the most points.
+pub fn block_leader(s: &State, p: u8, w: &Weights) -> Option<u8> {
+    if !w.endgame.block_leader {
+        return None;
+    }
+    let length = w.endgame.block_from * w.turns_per_player * f64::from(s.settings.players);
+    if f64::from(s.turn) < length {
+        return None;
+    }
+    super::leaf::leader_seat(s, p, w)
+}
+/// Roads worth considering for seat `p`: those that improve its own reach, and with the
+/// late endgame switch on, those that lengthen the leader's route to the best site they
+/// contest with this seat.
+pub fn road_preference(s: &State, p: u8, w: &Weights, cap: usize) -> Vec<Action> {
+    let own = s.players[p as usize];
+    if own.roads >= 15
+        || !s.players[p as usize].resources.contains(Resources::ROAD) && s.phase == Phase::Main
+    {
+        return vec![];
+    }
+    let mut scored: Vec<(f64, u8)> = Vec::new();
+    let (base_best, _) = super::leaf::reach(s, p);
+    let leader = (0..s.settings.players)
+        .filter(|&o| o != p)
+        .map(|o| road_length(s, o))
+        .max()
+        .unwrap_or(0)
+        .max(4);
+    let own_length = road_length(s, p);
+    let contend = own.roads >= 4 && own_length + 2 >= leader && s.longest_road != Some(p);
+    let deny =
+        block_leader(s, p, w).and_then(|q| super::bargain::contested_site(s, p, q).map(|v| (q, v)));
+    let their_route = deny.map(|(q, _)| super::bargain::distances(s, q));
+    for e in 0..72u8 {
+        if !road_allowed(s, p, e) {
+            continue;
+        }
+        let Ok(next) = apply(s, p, Action::BuildRoad { edge: e }) else {
+            continue;
+        };
+        let (best, others) = super::leaf::reach(&next, p);
+        let mut score = best - base_best + f64::from(others) * 0.02;
+        if contend && road_length(&next, p) > own_length {
+            score += 0.5;
+        }
+        if let (Some((q, v)), Some(route)) = (deny, &their_route) {
+            let theirs = route[v as usize];
+            let after = super::bargain::distances(&next, q)[v as usize];
+            let denied = f64::from(after.saturating_sub(theirs)).min(3.0);
+            if theirs < u8::MAX && denied > 0.0 {
+                score += w.endgame.block_bias * crate::leaf::site_value(s, v)
+                    / (1.0 + f64::from(theirs))
+                    * denied
+                    / 3.0
+                    * 0.5;
+            }
+        }
+        if score > 1e-9 {
+            scored.push((score, e));
+        }
+    }
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored
+        .into_iter()
+        .take(cap)
+        .map(|(_, e)| Action::BuildRoad { edge: e })
+        .collect()
+}
+/// Robber placements worth considering for seat `p`, scored by the production they block
+/// and the cards they steal. With the late endgame switch on, the leader's production and
+/// cards count extra.
+pub fn robber_preference(s: &State, p: u8, w: &Weights, cap: usize) -> Vec<Action> {
+    let mut scored: Vec<(f64, Action)> = Vec::new();
+    let leader = block_leader(s, p, w);
+    for hex in 0..19u8 {
+        if hex == s.robber {
+            continue;
+        }
+        let pips = f64::from(6u8.saturating_sub(s.layout.number(hex).abs_diff(7)));
+        let mut blocked = 0.0;
+        let mut own = false;
+        for &v in &topology().hex_vertices[hex as usize] {
+            if let Some(o) = s.board.owner(v) {
+                let scale = if s.board.building(v) > 4 { 2.0 } else { 1.0 };
+                if o == p {
+                    own = true;
+                } else {
+                    let mut weight = 1.0 + f64::from(public_points(s, o)) * 0.15;
+                    if Some(o) == leader {
+                        weight +=
+                            w.endgame.block_bias * super::leaf::opponent_points(s, o, w) * 0.15;
+                    }
+                    blocked += pips * scale * weight;
+                }
+            }
+        }
+        if own || s.layout.resource(hex).is_none() {
+            continue;
+        }
+        let victims = robber_victims(s, p, hex);
+        if victims.is_empty() {
+            scored.push((blocked, Action::MoveRobber { hex, victim: None }));
+        }
+        for v in victims {
+            let cards = f64::from(s.players[v as usize].resources.total()).min(8.0);
+            let mut bonus = 1.0 + cards * 0.4 + f64::from(public_points(s, v)) * 0.3;
+            if Some(v) == leader {
+                bonus += w.endgame.block_bias * super::leaf::opponent_points(s, v, w) * 0.3;
+            }
+            scored.push((
+                blocked + bonus,
+                Action::MoveRobber {
+                    hex,
+                    victim: Some(v),
+                },
+            ));
+        }
+    }
+    if scored.is_empty() {
+        return vec![opponent::robber(s, p)];
+    }
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+    scored.into_iter().take(cap).map(|(_, a)| a).collect()
+}
 /// The 11 dice totals with their exact probabilities out of 36.
 pub fn dice_totals() -> [(u8, f64); 11] {
     std::array::from_fn(|i| {
@@ -354,88 +480,10 @@ impl<'a> Search<'a> {
     // ----- candidate generation -------------------------------------------------------------
 
     fn useful_roads(&self, s: &State, p: u8, cap: usize) -> Vec<Action> {
-        let own = s.players[p as usize];
-        if own.roads >= 15
-            || !s.players[p as usize].resources.contains(Resources::ROAD) && s.phase == Phase::Main
-        {
-            return vec![];
-        }
-        let mut scored: Vec<(f64, u8)> = Vec::new();
-        let (base_best, _) = super::leaf::reach(s, p);
-        let leader = (0..s.settings.players)
-            .filter(|&o| o != p)
-            .map(|o| road_length(s, o))
-            .max()
-            .unwrap_or(0)
-            .max(4);
-        let own_length = road_length(s, p);
-        let contend = own.roads >= 4 && own_length + 2 >= leader && s.longest_road != Some(p);
-        for e in 0..72u8 {
-            if !road_allowed(s, p, e) {
-                continue;
-            }
-            let Ok(next) = apply(s, p, Action::BuildRoad { edge: e }) else {
-                continue;
-            };
-            let (best, others) = super::leaf::reach(&next, p);
-            let mut score = best - base_best + f64::from(others) * 0.02;
-            if contend && road_length(&next, p) > own_length {
-                score += 0.5;
-            }
-            if score > 1e-9 {
-                scored.push((score, e));
-            }
-        }
-        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        scored
-            .into_iter()
-            .take(cap)
-            .map(|(_, e)| Action::BuildRoad { edge: e })
-            .collect()
+        road_preference(s, p, &self.w, cap)
     }
     fn robber_candidates(&self, s: &State, p: u8, cap: usize) -> Vec<Action> {
-        let mut scored: Vec<(f64, Action)> = Vec::new();
-        for hex in 0..19u8 {
-            if hex == s.robber {
-                continue;
-            }
-            let pips = f64::from(6u8.saturating_sub(s.layout.number(hex).abs_diff(7)));
-            let mut blocked = 0.0;
-            let mut own = false;
-            for &v in &topology().hex_vertices[hex as usize] {
-                if let Some(o) = s.board.owner(v) {
-                    let scale = if s.board.building(v) > 4 { 2.0 } else { 1.0 };
-                    if o == p {
-                        own = true;
-                    } else {
-                        blocked += pips * scale * (1.0 + f64::from(public_points(s, o)) * 0.15);
-                    }
-                }
-            }
-            if own || s.layout.resource(hex).is_none() {
-                continue;
-            }
-            let victims = robber_victims(s, p, hex);
-            if victims.is_empty() {
-                scored.push((blocked, Action::MoveRobber { hex, victim: None }));
-            }
-            for v in victims {
-                let cards = f64::from(s.players[v as usize].resources.total()).min(8.0);
-                let bonus = 1.0 + cards * 0.4 + f64::from(public_points(s, v)) * 0.3;
-                scored.push((
-                    blocked + bonus,
-                    Action::MoveRobber {
-                        hex,
-                        victim: Some(v),
-                    },
-                ));
-            }
-        }
-        if scored.is_empty() {
-            return vec![opponent::robber(s, p)];
-        }
-        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        scored.into_iter().take(cap).map(|(_, a)| a).collect()
+        robber_preference(s, p, &self.w, cap)
     }
     fn deficits(own: Resources) -> [(Resources, f64); 4] {
         [

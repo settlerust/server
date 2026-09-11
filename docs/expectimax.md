@@ -225,6 +225,7 @@ reproducible bit for bit.
 | `cache` | `none` | Transposition tables: `none` per depth pass, `decision` across the passes of one decision, `turn` across the decisions of a turn |
 | `weights` | see below | Leaf weights |
 | `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
+| `endgame` | all off | Endgame switches: race leaf, hidden victory points, late leader bias |
 
 ### Leaf
 
@@ -252,9 +253,48 @@ remain, estimated from `turns_per_player` and the current turn. The terms are:
 `Inclinations` are five sliders: `aggression` scales the opponent terms, `risk`
 scales the discard exposure inversely, `development` scales development-card
 terms, `expansion` scales site and road terms, and `trade` sets the margin a
-proposal or acceptance must beat the plain alternative by (24 points at 0, none
-at 1) and scales the reference willingness model. A slider at 0.5 leaves the
+proposal or acceptance must beat the plain alternative by (24 points at 0, none at
+1) and scales the reference willingness model. A slider at 0.5 leaves the
 weights unchanged; 0 halves and 1 multiplies by 1.5.
+
+### Endgame switches
+
+`endgame` holds three switches, all off by default so the leaf and the candidate
+shortlists are unchanged. Each is one hypothesis about the endgame.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `race` | false | Race leaf: once an opponent is within `trigger` points of victory, the opponent terms are replaced by the race margin and the leader's expected points next turn |
+| `trigger` | 2 | Opponent points from victory that arms the race leaf |
+| `margin` | 1.0 | Weight of the own-minus-leader margin, in multiples of one point |
+| `tempo` | 1.0 | Weight of the leader's expected points next turn, in the same units |
+| `hidden_points` | false | Count the victory cards sampled into each hidden world instead of public points alone |
+| `block_leader` | false | Bias the robber and blocking roads toward the points leader late |
+| `block_from` | 2/3 | Share of the estimated game length after which `block_leader` arms |
+| `block_bias` | 1.0 | Strength of the late leader bias |
+
+When `race` arms, the leaf drops `opponent_progress` and `opponent_production`
+and adds two terms: `race_margin` is own points minus the leader's points times
+`margin` point values, and `leader_tempo` subtracts the leader's expected new
+points next turn times `tempo`. The expected gain is the best of a city, a
+reachable settlement, and a development purchase, each times the share of its
+cost the leader's sampled hand plus one roll of their production covers, with the
+purchase priced at the deck's remaining victory-card share and blocked production
+discounted. Own points stay in their own term, so the margin makes a point worth
+double while the leader's points count fully against the seat.
+
+`hidden_points` swaps public points for the expected full score in every opponent
+term: each sampled world already holds the opponents' hidden development cards
+drawn from the remaining deck prior, so a leaf averaged over worlds counts the
+expected hidden victory points from public purchases and plays. The race trigger
+and the leader's margin read the same estimate.
+
+`block_leader` changes only the candidate shortlists, never the leaf. Robber
+placements score the leader's blocked production and stolen cards with
+`block_bias` times their usual points weight, and roads that lengthen the
+leader's route to the best site both seats contest score half that site's
+discounted value per three roads of denial, once the game is past `block_from` of
+its estimated `turns_per_player` length.
 
 Contributions in a report are the mass-weighted sums of these terms across the
 expanded continuations. The reported `statistics` include transitions, leaves,

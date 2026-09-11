@@ -184,6 +184,9 @@ pub struct SearchConfig {
     pub accept_asks: bool,
     /// Build prediction switches; see `PredictConfig`.
     pub predict: PredictConfig,
+    /// Endgame switches: a race leaf against a near-winning leader, expected hidden victory
+    /// points, and late robber and road bias toward the leader. See `EndgameConfig`.
+    pub endgame: weights::EndgameConfig,
 }
 /// Build prediction switches. Each is off by default, reproducing the search exactly.
 /// `opponents` makes the lookahead's opponent model execute each opponent's predicted next
@@ -244,6 +247,7 @@ impl Default for SearchConfig {
             asks: true,
             accept_asks: true,
             predict: PredictConfig::default(),
+            endgame: weights::EndgameConfig::default(),
         }
     }
 }
@@ -262,6 +266,11 @@ impl SearchConfig {
         self.leaf.hand = self.leaf.hand.clamp(0.0, 10.0);
         self.deepen_fraction = self.deepen_fraction.clamp(0.01, 1.0);
         self.deepen_gap = self.deepen_gap.clamp(0.0, 1_000_000.0);
+        self.endgame.margin = self.endgame.margin.clamp(0.0, 10.0);
+        self.endgame.tempo = self.endgame.tempo.clamp(0.0, 10.0);
+        self.endgame.trigger = self.endgame.trigger.clamp(0, 8);
+        self.endgame.block_from = self.endgame.block_from.clamp(0.0, 1.0);
+        self.endgame.block_bias = self.endgame.block_bias.clamp(0.0, 10.0);
         self
     }
     fn limits(&self, depth: u8) -> Limits {
@@ -378,7 +387,8 @@ pub fn analyze_with(
             weight: 1.0 / states.len() as f64,
         })
         .collect();
-    let weights = config.inclinations.apply(config.weights);
+    let mut weights = config.inclinations.apply(config.weights);
+    weights.endgame = config.endgame;
     let partner_factor = if config.reciprocity {
         reciprocity(history, seat)
     } else {
@@ -1330,7 +1340,8 @@ pub fn rank_state_with(
     cache: &mut Cache,
 ) -> Result<Vec<(Action, f64)>, SearchError> {
     let config = config.clone().bounded();
-    let weights = config.inclinations.apply(config.weights);
+    let mut weights = config.inclinations.apply(config.weights);
+    weights.endgame = config.endgame;
     let never = || false;
     match config.cache {
         CacheMode::None | CacheMode::Decision => cache.clear(),

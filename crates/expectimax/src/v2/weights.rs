@@ -2,6 +2,50 @@
 //! multiplier in heuristic points, so a configuration can be logged and reproduced exactly.
 use serde::{Deserialize, Serialize};
 
+/// Endgame switches, all off by default so the leaf and the candidate generators are
+/// unchanged. Each switch is one hypothesis: `race` swaps the opponent terms for a race
+/// margin once an opponent is close to victory, `hidden_points` counts the victory cards
+/// sampled into each hidden world, and `block_leader` biases the robber and blocking roads
+/// toward the points leader late in the game.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EndgameConfig {
+    /// Race leaf: once an opponent is within `trigger` points of victory, replace the
+    /// opponent terms with the own-minus-leader margin and the leader's expected points
+    /// next turn.
+    pub race: bool,
+    /// Opponent points from victory that arms the race leaf.
+    pub trigger: u8,
+    /// Weight of the own-minus-leader margin, in multiples of one point's leaf value.
+    pub margin: f64,
+    /// Weight of the leader's expected points next turn, in the same units.
+    pub tempo: f64,
+    /// Count opponents' expected hidden victory points, from the deck cards sampled into
+    /// each hidden world, instead of public points alone.
+    pub hidden_points: bool,
+    /// Bias the robber and blocking roads toward the points leader once the game is past
+    /// `block_from` of its estimated length.
+    pub block_leader: bool,
+    /// Share of the estimated game length after which `block_leader` arms.
+    pub block_from: f64,
+    /// Strength of the late leader bias in robber and road scoring.
+    pub block_bias: f64,
+}
+impl Default for EndgameConfig {
+    fn default() -> Self {
+        Self {
+            race: false,
+            trigger: 2,
+            margin: 1.0,
+            tempo: 1.0,
+            hidden_points: false,
+            block_leader: false,
+            block_from: 2.0 / 3.0,
+            block_bias: 1.0,
+        }
+    }
+}
+
 /// Leaf weights. Points, cards, and production share one currency: a card is worth
 /// `card_value` points, and production is worth its cards over the rolls that remain.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -51,6 +95,8 @@ pub struct Weights {
     pub denial: f64,
     /// Terminal win and loss.
     pub terminal: f64,
+    /// Endgame switches; the defaults leave the search unchanged.
+    pub endgame: EndgameConfig,
 }
 impl Default for Weights {
     fn default() -> Self {
@@ -77,6 +123,7 @@ impl Default for Weights {
             opponent_production: -60.0,
             denial: 0.0,
             terminal: 10_000.0,
+            endgame: EndgameConfig::default(),
         }
     }
 }

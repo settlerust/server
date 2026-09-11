@@ -150,6 +150,62 @@ fn port_value(s: &State, p: u8, rates: &[f64; 5], w: &Weights, future: f64) -> f
 pub fn remaining_rolls(s: &State, w: &Weights) -> f64 {
     (w.turns_per_player * f64::from(s.settings.players) - f64::from(s.turn)).max(w.minimum_rolls)
 }
+/// The points an opponent is credited with: public points, plus the hidden victory cards
+/// sampled into this world when the endgame switch is on. Averaged over worlds this is the
+/// expected hidden score under the remaining deck composition.
+pub fn opponent_points(s: &State, q: u8, w: &Weights) -> f64 {
+    if w.endgame.hidden_points {
+        f64::from(points(s, q))
+    } else {
+        f64::from(public_points(s, q))
+    }
+}
+/// The opponent with the most points, first seat winning ties.
+pub fn leader_seat(s: &State, p: u8, w: &Weights) -> Option<u8> {
+    (0..s.settings.players)
+        .filter(|&q| q != p)
+        .max_by(|&a, &b| opponent_points(s, a, w).total_cmp(&opponent_points(s, b, w)))
+}
+/// Expected new victory points seat `q` gains on their next turn: the best of a city, a
+/// reachable settlement, or a development purchase, times the share of its cost their hand
+/// plus one roll of their own production covers. The remaining deck prices the purchase's
+/// hidden victory points, and blocked production counts for less.
+pub fn expected_next_gain(s: &State, q: u8) -> f64 {
+    let own = s.players[q as usize];
+    let hand = own.resources;
+    let rates = rates(s, q);
+    let cover = |cost: Resources| -> f64 {
+        let need = f64::from(cost.total());
+        if need <= 0.0 {
+            return 1.0;
+        }
+        let have: f64 = (0..5)
+            .map(|r| {
+                let held = f64::from(hand.0[r]).min(f64::from(cost.0[r]));
+                held + rates[r].min(f64::from(cost.0[r]) - held)
+            })
+            .sum();
+        (have / need).min(1.0)
+    };
+    let mut best = 0.0f64;
+    if own.cities < 4 && (0..54u8).any(|v| s.board.building(v) == q + 1) {
+        best = best.max(cover(Resources::CITY));
+    }
+    if own.settlements < 5 {
+        let (site, _, distance) = reach_detail(s, q);
+        if site > 0.0 {
+            let mut cost = Resources::SETTLEMENT;
+            cost.0[0] = cost.0[0].saturating_add(distance);
+            cost.0[1] = cost.0[1].saturating_add(distance);
+            best = best.max(cover(cost));
+        }
+    }
+    if s.deck_count() > 0 {
+        let vps = f64::from(s.deck[4]) / f64::from(s.deck_count());
+        best = best.max(cover(Resources::DEVELOPMENT) * vps);
+    }
+    best
+}
 pub fn evaluate(s: &State, p: u8, w: &Weights) -> Terms {
     let own = s.players[p as usize];
     let rates = rates(s, p);
@@ -161,27 +217,44 @@ pub fn evaluate(s: &State, p: u8, w: &Weights) -> Terms {
             if winner == p { w.terminal } else { -w.terminal },
         );
     }
-    t.insert("points", f64::from(points(s, p)) * w.point);
+    let own_points = f64::from(points(s, p));
+    t.insert("points", own_points * w.point);
     let mut max_opp = 0.0f64;
+    let mut leader = None;
     let mut sum_opp = 0.0;
     let mut max_opp_rate = 0.0f64;
     for other in 0..s.settings.players {
         if other == p {
             continue;
         }
-        let pts = f64::from(public_points(s, other));
-        max_opp = max_opp.max(pts);
+        let pts = opponent_points(s, other, w);
+        if leader.is_none() || pts > max_opp {
+            max_opp = pts;
+            leader = Some(other);
+        }
         sum_opp += pts;
         if w.opponent_production != 0.0 {
             max_opp_rate = max_opp_rate.max(crate::leaf::rates(s, other).iter().sum::<f64>());
         }
     }
-    t.insert(
-        "opponent_progress",
-        max_opp * w.opponent_max_point + sum_opp * w.opponent_sum_point,
-    );
-    if w.opponent_production != 0.0 {
-        t.insert("opponent_production", max_opp_rate * w.opponent_production);
+    // Race leaf: with an opponent close to victory, the plain opponent terms give way to
+    // the own-minus-leader margin and the leader's expected points next turn.
+    let to_win = f64::from(s.settings.points_to_win.max(3));
+    if w.endgame.race && max_opp >= to_win - f64::from(w.endgame.trigger) {
+        t.insert(
+            "race_margin",
+            (own_points - max_opp) * w.point * w.endgame.margin,
+        );
+        let tempo = leader.map_or(0.0, |q| expected_next_gain(s, q));
+        t.insert("leader_tempo", -tempo * w.point * w.endgame.tempo);
+    } else {
+        t.insert(
+            "opponent_progress",
+            max_opp * w.opponent_max_point + sum_opp * w.opponent_sum_point,
+        );
+        if w.opponent_production != 0.0 {
+            t.insert("opponent_production", max_opp_rate * w.opponent_production);
+        }
     }
     if finished {
         return Terms(t);
