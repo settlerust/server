@@ -161,14 +161,19 @@ pub fn block_leader(s: &State, p: u8, w: &Weights) -> Option<u8> {
 /// Roads worth considering for seat `p`: those that improve its own reach, and with the
 /// late endgame switch on, those that lengthen the leader's route to the best site they
 /// contest with this seat.
-pub fn road_preference(s: &State, p: u8, w: &Weights, cap: usize) -> Vec<Action> {
+/// Shared measurements for scoring candidate roads: the seat's current reach, the trail
+/// race, the contested site a blocking road could take, and the leading opponent's
+/// reachable value when the `opponent_expansion` term is on.
+struct RoadBase {
+    base_best: f64,
+    contend: bool,
+    own_length: u8,
+    deny: Option<(u8, u8)>,
+    their_route: Option<[u8; 54]>,
+    base_opp: f64,
+}
+fn road_base(s: &State, p: u8, w: &Weights) -> RoadBase {
     let own = s.players[p as usize];
-    if own.roads >= 15
-        || !s.players[p as usize].resources.contains(Resources::ROAD) && s.phase == Phase::Main
-    {
-        return vec![];
-    }
-    let mut scored: Vec<(f64, u8)> = Vec::new();
     let (base_best, _) = super::leaf::reach(s, p);
     let leader = (0..s.settings.players)
         .filter(|&o| o != p)
@@ -177,10 +182,65 @@ pub fn road_preference(s: &State, p: u8, w: &Weights, cap: usize) -> Vec<Action>
         .unwrap_or(0)
         .max(4);
     let own_length = road_length(s, p);
-    let contend = own.roads >= 4 && own_length + 2 >= leader && s.longest_road != Some(p);
+    let contend = own.roads >= 4
+        && own_length + 2 >= leader
+        && s.longest_road != Some(p)
+        && (w.road_contention_gate == 0.0 || super::leaf::road_production_lead(s, p));
     let deny =
         block_leader(s, p, w).and_then(|q| super::bargain::contested_site(s, p, q).map(|v| (q, v)));
     let their_route = deny.map(|(q, _)| super::bargain::distances(s, q));
+    let base_opp = if w.opponent_expansion != 0.0 {
+        super::leaf::opponent_reach(s, p)
+    } else {
+        0.0
+    };
+    RoadBase {
+        base_best,
+        contend,
+        own_length,
+        deny,
+        their_route,
+        base_opp,
+    }
+}
+/// Candidate score of one road: the gain in own reachable-site value and site count, a
+/// bonus for extending a contested trail, the endgame credit for cutting the leader's
+/// route to the contested site, and, with the `opponent_expansion` term on, the denied
+/// value of the leading opponent's reachable sites. The trail bonus asks whether the seat
+/// may contend for the award: four or more roads within two of the leader, and, with the
+/// `road_contention_gate` weight on, the table's best brick and lumber production.
+fn road_score(s: &State, next: &State, p: u8, w: &Weights, base: &RoadBase) -> f64 {
+    let (best, others) = super::leaf::reach(next, p);
+    let mut score = best - base.base_best + f64::from(others) * 0.02;
+    if base.contend && road_length(next, p) > base.own_length {
+        score += 0.5;
+    }
+    if let (Some((q, v)), Some(route)) = (base.deny, &base.their_route) {
+        let theirs = route[v as usize];
+        let after = super::bargain::distances(next, q)[v as usize];
+        let denied = f64::from(after.saturating_sub(theirs)).min(3.0);
+        if theirs < u8::MAX && denied > 0.0 {
+            score += w.endgame.block_bias * crate::leaf::site_value(s, v)
+                / (1.0 + f64::from(theirs))
+                * denied
+                / 3.0
+                * 0.5;
+        }
+    }
+    if w.opponent_expansion != 0.0 {
+        score += w.opponent_expansion * (base.base_opp - super::leaf::opponent_reach(next, p));
+    }
+    score
+}
+pub fn road_preference(s: &State, p: u8, w: &Weights, cap: usize) -> Vec<Action> {
+    let own = s.players[p as usize];
+    if own.roads >= 15
+        || !s.players[p as usize].resources.contains(Resources::ROAD) && s.phase == Phase::Main
+    {
+        return vec![];
+    }
+    let base = road_base(s, p, w);
+    let mut scored: Vec<(f64, u8)> = Vec::new();
     for e in 0..72u8 {
         if !road_allowed(s, p, e) {
             continue;
@@ -188,23 +248,7 @@ pub fn road_preference(s: &State, p: u8, w: &Weights, cap: usize) -> Vec<Action>
         let Ok(next) = apply(s, p, Action::BuildRoad { edge: e }) else {
             continue;
         };
-        let (best, others) = super::leaf::reach(&next, p);
-        let mut score = best - base_best + f64::from(others) * 0.02;
-        if contend && road_length(&next, p) > own_length {
-            score += 0.5;
-        }
-        if let (Some((q, v)), Some(route)) = (deny, &their_route) {
-            let theirs = route[v as usize];
-            let after = super::bargain::distances(&next, q)[v as usize];
-            let denied = f64::from(after.saturating_sub(theirs)).min(3.0);
-            if theirs < u8::MAX && denied > 0.0 {
-                score += w.endgame.block_bias * crate::leaf::site_value(s, v)
-                    / (1.0 + f64::from(theirs))
-                    * denied
-                    / 3.0
-                    * 0.5;
-            }
-        }
+        let score = road_score(s, &next, p, w, &base);
         if score > 1e-9 {
             scored.push((score, e));
         }
@@ -1440,3 +1484,11 @@ impl<'a> Search<'a> {
 #[cfg(test)]
 #[path = "../../tests/internal/v2_robber.rs"]
 mod robber_tests;
+
+#[cfg(test)]
+#[path = "../../tests/internal/road_block.rs"]
+mod road_block_tests;
+
+#[cfg(test)]
+#[path = "../../tests/internal/road_contention.rs"]
+mod road_contention_tests;

@@ -84,6 +84,20 @@ pub struct SeatRecord {
     pub settlements_built: u32,
     pub cities_built: u32,
     pub roads_built: u32,
+    /// Times this seat gained the longest-road award, and whether it held it at the end.
+    #[serde(default)]
+    pub road_awards: u32,
+    #[serde(default)]
+    pub longest_road: bool,
+    /// Final longest-trail length.
+    #[serde(default)]
+    pub road_length: u8,
+    /// Own roads that raised the leading expander's distance to their best reachable site,
+    /// and the total discounted site value denied by those roads.
+    #[serde(default)]
+    pub road_blocks: u32,
+    #[serde(default)]
+    pub expansion_denied: f64,
     pub development_bought: u32,
     /// Knight cards played (a subset of played development cards).
     #[serde(default)]
@@ -315,8 +329,18 @@ impl Table {
                         .get_or_insert(self.state.turn);
                 }
                 Event::BuiltRoad { player, .. } if self.state.turn > 0 => {
-                    records[player as usize].roads_built += 1
+                    records[player as usize].roads_built += 1;
+                    let before = settlers_expectimax::v2::leaf::opponent_reach(&self.state, player);
+                    let after = settlers_expectimax::v2::leaf::opponent_reach(&next, player);
+                    if before > after + 1e-9 {
+                        records[player as usize].road_blocks += 1;
+                        records[player as usize].expansion_denied += before - after;
+                    }
                 }
+                Event::AwardsChanged {
+                    longest_road: Some(holder),
+                    ..
+                } => records[holder as usize].road_awards += 1,
                 Event::BoughtDevelopment { player } => {
                     records[player as usize].development_bought += 1
                 }
@@ -836,6 +860,8 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
     }
     for (i, record) in records.iter_mut().enumerate() {
         record.points = points(&t.state, i as u8);
+        record.road_length = road_length(&t.state, i as u8);
+        record.longest_road = t.state.longest_road == Some(i as u8);
         record.effort = seats[i].effort();
     }
     Ok(GameRecord {

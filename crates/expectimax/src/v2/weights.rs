@@ -79,6 +79,10 @@ pub struct Weights {
     pub road_length: f64,
     /// Being within one road of taking the longest-road award.
     pub road_contention: f64,
+    /// When 1, the contention credit and the contested-trail road bonus apply only while
+    /// this seat ties or leads the table in brick plus lumber production. Zero (the
+    /// default) contends whenever within reach of the award.
+    pub road_contention_gate: f64,
     /// Expected discard loss when holding more than the limit, in card values.
     pub hand_risk: f64,
     /// Fraction of matched production credited for a 2:1 port, and a flat 3:1 port value.
@@ -93,6 +97,10 @@ pub struct Weights {
     /// unit of the site's production value and per turn of that seat's time-to-afford.
     /// Zero, the default, never discounts.
     pub denial: f64,
+    /// Highest opponent reachable-site value, discounted by its road distance. A road that
+    /// raises that distance is credited by the same amount. Zero (the default) disables the
+    /// term and keeps blocking roads out of the candidate list.
+    pub opponent_expansion: f64,
     /// Terminal win and loss.
     pub terminal: f64,
     /// Endgame switches; the defaults leave the search unchanged.
@@ -115,6 +123,7 @@ impl Default for Weights {
             knight: 8.0,
             road_length: 4.0,
             road_contention: 40.0,
+            road_contention_gate: 0.0,
             hand_risk: 1.0,
             port_match: 0.25,
             port_generic: 15.0,
@@ -122,6 +131,7 @@ impl Default for Weights {
             opponent_sum_point: -6.0,
             opponent_production: -60.0,
             denial: 0.0,
+            opponent_expansion: 0.0,
             terminal: 10_000.0,
             endgame: EndgameConfig::default(),
         }

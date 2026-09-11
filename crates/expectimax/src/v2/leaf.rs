@@ -36,6 +36,33 @@ pub fn reach(s: &State, p: u8) -> (f64, u32) {
     let (value, others, distance) = reach_detail(s, p);
     (value / (1.0 + f64::from(distance)), others)
 }
+/// Whether the seat ties or leads the table in brick plus lumber production per roll.
+/// The `road_contention_gate` weight restricts the longest-road contention credit to
+/// seats that hold this lead: they are the ones who can keep a road race going.
+pub fn road_production_lead(s: &State, p: u8) -> bool {
+    let own = {
+        let r = rates(s, p);
+        r[0] + r[1]
+    };
+    (0..s.settings.players).filter(|&q| q != p).all(|q| {
+        let r = rates(s, q);
+        r[0] + r[1] <= own + 1e-12
+    })
+}
+/// The leading opponent's best reachable site value, discounted by its road distance.
+/// This is the expansion the `opponent_expansion` term denies: a road on the opponent's
+/// shortest path raises their distance and lowers this quantity.
+pub fn opponent_reach(s: &State, p: u8) -> f64 {
+    let mut best = 0.0f64;
+    for q in 0..s.settings.players {
+        if q == p || s.players[q as usize].settlements >= 5 {
+            continue;
+        }
+        let (value, _, distance) = reach_detail(s, q);
+        best = best.max(value / (1.0 + f64::from(distance)));
+    }
+    best
+}
 /// Turns until a cost is affordable from the hand at the seat's production per own turn.
 pub fn eta_turns(s: &State, hand: Resources, cost: Resources, rates: &[f64; 5]) -> f64 {
     let per_turn = f64::from(s.settings.players);
@@ -385,7 +412,11 @@ pub fn evaluate_with(s: &State, p: u8, w: &Weights, knight_play_value: bool) -> 
         own.roads
     };
     let mut road = f64::from(length) * w.road_length;
-    if s.longest_road != Some(p) && own.roads >= 4 && own.roads < 15 {
+    if s.longest_road != Some(p)
+        && own.roads >= 4
+        && own.roads < 15
+        && (w.road_contention_gate == 0.0 || road_production_lead(s, p))
+    {
         let leader = (0..s.settings.players)
             .filter(|&o| o != p)
             .map(|o| road_length(s, o))
@@ -397,6 +428,12 @@ pub fn evaluate_with(s: &State, p: u8, w: &Weights, knight_play_value: bool) -> 
         }
     }
     t.insert("road", road);
+    if w.opponent_expansion != 0.0 {
+        t.insert(
+            "opponent_expansion",
+            -opponent_reach(s, p) * future * w.opponent_expansion,
+        );
+    }
     let cards = own.resources.total();
     if cards > s.settings.discard_limit as u16 {
         let seven = 1.0 - (5.0f64 / 6.0).powi(i32::from(s.settings.players));

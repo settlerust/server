@@ -176,9 +176,11 @@ frozen comparator; a report from the tunable search carries `policy:
 
 A level is one of the root player's turns. The current turn is planned as a
 small tree: every candidate first action is kept (builds, development plays,
-purchases, roads that shorten the path to a reachable site or extend a
-contested longest road, bank exchanges that reduce a build deficit, and ending
-the turn), later steps keep `EndTurn` plus the three, two, then one best
+purchases, roads that shorten the path to a reachable site, extend a
+contested longest road, or cut the leading opponent's path to their best
+site when `opponent_expansion` is set, bank exchanges that reduce a build
+deficit, and ending the turn), later steps keep `EndTurn` plus the three,
+two, then one best
 actions by static value, and long turns only end. With `spend_down`, a hand
 over the discard limit also lists up to three bank exchanges and two roads
 chosen only to shed cards, so the `hand_risk` term can price spending down
@@ -252,12 +254,13 @@ remain, estimated from `turns_per_player` and the current turn. The terms are:
 | `expansion` | Best reachable site's production-equivalent × `expansion` plus `expansion_sites` per other site |
 | `diversity` | Share of resource types produced at a useful rate × `diversity` |
 | `development` | Held non-victory cards × `development` plus knights played × `knight` |
-| `road` | Longest trail × `road_length`, plus half of `road_contention` when within one road of the award |
+| `road` | Longest trail × `road_length`, plus half of `road_contention` when within one road of the award; with `road_contention_gate` set to 1 the credit applies only while the seat ties or leads the table in brick plus lumber production |
 | `hand_risk` | Expected cards lost to a seven before the next turn × card value × `hand_risk` |
 | `ports` | Matched 2:1 production × `port_match` and a flat `port_generic` |
 | `opponent_progress` | Highest opponent score × `opponent_max_point` plus all opponents' scores × `opponent_sum_point` |
 | `opponent_production` | Highest opponent production × `opponent_production` |
 | `denial` | Open reachable sites other seats' predicted builds are heading for, each discounted by `1 / (1 + their turns to afford the whole line)`, × `denial` (zero by default, so the term is absent) |
+| `opponent_expansion` | Leading opponent's best reachable site, discounted by its road distance, × `opponent_expansion` (negative; default 0 disables the term) |
 | `terminal` | ± `terminal` at a finished game |
 
 `Inclinations` are five sliders: `aggression` scales the opponent terms, `risk`
