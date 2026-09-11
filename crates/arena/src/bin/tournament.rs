@@ -11,7 +11,7 @@ use std::sync::{
 fn usage() -> ! {
     eprintln!(
         "usage: tournament --seat SPEC [--seat SPEC ...] --seeds A-B [--rotations N] [--threads N] \
-         [--points N] [--max-turns N] [--out FILE] [--trace] [--deterministic]\n  SPEC: fast | eta | legal | v1 | v2 | v1:{{json}} | v2:{{json}}"
+         [--points N] [--max-turns N] [--out FILE] [--trace] [--deterministic] [--predict-diag SEAT]\n  SPEC: fast | eta | legal | v1 | v2 | v1:{{json}} | v2:{{json}}"
     );
     std::process::exit(2)
 }
@@ -26,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut out: Option<String> = None;
     let mut trace = false;
     let mut deterministic = false;
+    let mut predict_diag: Option<u8> = None;
     let mut i = 0;
     while i < args.len() {
         let value = |i: usize| args.get(i + 1).cloned().unwrap_or_else(|| usage());
@@ -52,6 +53,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 deterministic = true;
                 i -= 1;
             }
+            "--predict-diag" => predict_diag = Some(value(i).parse()?),
             _ => usage(),
         }
         i += 2;
@@ -99,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         seed,
                         max_turns,
                         trace,
+                        predict_diag,
                         ..TableSettings::default()
                     };
                     let record = play(lineup, table).unwrap_or_else(|e| {

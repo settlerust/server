@@ -3,6 +3,8 @@
 use crate::seats::{Effort, Seat, fallback};
 use serde::{Deserialize, Serialize};
 use settlers_engine::*;
+use settlers_expectimax::v2::{bargain, predict};
+use settlers_protocol::knowledge::{ResourceEstimate, ResourceKnowledge};
 use settlers_protocol::{
     Command, EventBatch, GameView, MemberView, OfferStatus, PublicEvent, TradeCloseReason,
     TradeOffer,
@@ -19,6 +21,12 @@ pub struct TableSettings {
     pub max_decisions: u32,
     /// Collect per-decision summaries from seats that provide them.
     pub trace: bool,
+    /// Measure build-prediction diagnostics from this observer seat's public knowledge:
+    /// at every other seat's first main-phase decision of a turn, record the observer's
+    /// prediction of that seat's next completed build and compare it with the first build
+    /// that seat completes in the same turn.
+    #[serde(default)]
+    pub predict_diag: Option<u8>,
 }
 impl Default for TableSettings {
     fn default() -> Self {
@@ -29,6 +37,7 @@ impl Default for TableSettings {
             max_actions_per_turn: 60,
             max_decisions: 30_000,
             trace: false,
+            predict_diag: None,
         }
     }
 }
@@ -55,6 +64,10 @@ pub struct SeatRecord {
     /// Offers this seat declined explicitly.
     #[serde(default)]
     pub declined: u32,
+    /// Another seat's settlements built on a vertex this seat could reach within three roads
+    /// just before the build. Frontier ground this seat lost to an opponent.
+    #[serde(default)]
+    pub sites_lost: u32,
     pub settlements_built: u32,
     pub cities_built: u32,
     pub roads_built: u32,
@@ -78,6 +91,57 @@ pub struct GameRecord {
     pub duration_ms: f64,
     pub seats: Vec<SeatRecord>,
     pub events: BTreeMap<String, u32>,
+    /// Build-prediction diagnostics from the observer seat named in the table settings:
+    /// per other seat, how many first-builds were observed and how many the observer's
+    /// prediction matched. Present only when the table was asked to measure them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predict_diag: Option<serde_json::Value>,
+}
+/// Build-prediction diagnostics measured by the table. `pending` holds the observer's
+/// prediction for the acting seat's current turn and resolves on that seat's first build.
+#[derive(Debug, Default)]
+struct PredictDiag {
+    observer: u8,
+    matches: [u32; 4],
+    builds: [u32; 4],
+    pending: Option<(u8, Action)>,
+}
+/// The integer hand closest to a public resource estimate: floor each expectation, then
+/// hand out the remaining cards to the largest fractional parts, never above the bound.
+fn expected_resources(est: &ResourceEstimate) -> Resources {
+    let mut out = Resources::default();
+    let mut order: Vec<usize> = (0..5).collect();
+    order.sort_by(|&a, &b| {
+        let frac = |r: usize| est.expected[r] - est.expected[r].floor();
+        frac(b)
+            .partial_cmp(&frac(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    for r in 0..5 {
+        out.0[r] = est.expected[r].floor().min(f64::from(est.maximum[r])) as u8;
+    }
+    let total = est.total;
+    let mut i = 0;
+    while out.total() < total && i < 100 {
+        let r = order[i % 5];
+        if out.0[r] < est.maximum[r] {
+            out.0[r] += 1;
+        }
+        i += 1;
+    }
+    out
+}
+/// Whether `event` is the completion of `action` (same piece, same place).
+fn same_build(event: &Event, action: &Action) -> bool {
+    match (event, action) {
+        (Event::BuiltSettlement { vertex, .. }, Action::BuildSettlement { vertex: v }) => {
+            vertex == v
+        }
+        (Event::BuiltCity { vertex, .. }, Action::BuildCity { vertex: v }) => vertex == v,
+        (Event::BuiltRoad { edge, .. }, Action::BuildRoad { edge: e }) => edge == e,
+        (Event::BoughtDevelopment { .. }, Action::BuyDevelopment) => true,
+        _ => false,
+    }
 }
 pub struct Table {
     pub state: State,
@@ -156,6 +220,7 @@ impl Table {
         events: Vec<Event>,
         counts: &mut BTreeMap<String, u32>,
         records: &mut [SeatRecord],
+        diag: &mut Option<PredictDiag>,
     ) {
         self.last_theft = None;
         for event in &events {
@@ -190,6 +255,38 @@ impl Table {
                     .map(|r| Resource::ALL[r]);
                 let _ = player;
             }
+        }
+        // Frontier ground lost to an opponent: a settlement just built on a vertex another
+        // seat could reach within three roads. Setup placements are not lost ground.
+        if self.state.turn > 0 {
+            for event in &events {
+                if let Event::BuiltSettlement { player: q, vertex } = *event {
+                    for f in 0..self.state.settings.players {
+                        if f != q && bargain::distances(&self.state, f)[vertex as usize] <= 3 {
+                            records[f as usize].sites_lost += 1;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(d) = diag.as_mut()
+            && let Some((q, action)) = d.pending
+            && let Some(event) = events.iter().find(|e| {
+                matches!(
+                    e,
+                    Event::BuiltSettlement { player, .. }
+                        | Event::BuiltCity { player, .. }
+                        | Event::BuiltRoad { player, .. }
+                        | Event::BoughtDevelopment { player }
+                    if *player == q
+                )
+            })
+        {
+            d.builds[q as usize] += 1;
+            if same_build(event, &action) {
+                d.matches[q as usize] += 1;
+            }
+            d.pending = None;
         }
         self.state = next;
         self.publish(
@@ -264,6 +361,14 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
     let mut turn_actions = 0u32;
     let mut noops = 0u32;
     let mut turn_key = (0u32, 0u8);
+    let mut diag: Option<PredictDiag> =
+        table
+            .predict_diag
+            .filter(|&o| (o as usize) < n)
+            .map(|observer| PredictDiag {
+                observer,
+                ..PredictDiag::default()
+            });
     let mut status = "completed";
     let mut decisions = 0u32;
     let mut trace = Vec::new();
@@ -284,8 +389,28 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
             turn_key = key;
             turn_actions = 0;
             noops = 0;
+            if let Some(d) = diag.as_mut() {
+                d.pending = None;
+            }
         }
         let p = actor(&t.state);
+        // The observer's prediction of the acting seat's next completed build, made once per
+        // turn at the acting seat's first main-phase decision, from public knowledge only.
+        if let Some(d) = diag.as_mut()
+            && t.state.phase == Phase::Main
+            && p != d.observer
+            && d.pending.is_none()
+        {
+            let view = t.view(d.observer, &[]);
+            let observation = view.game.as_ref().expect("observer view");
+            let knowledge = ResourceKnowledge::from_history_at_version(
+                observation,
+                &t.histories[d.observer as usize],
+                t.version,
+            );
+            let hand = expected_resources(&knowledge.players[p as usize]);
+            d.pending = predict::next_build(&t.state, p, hand).map(|b| (p, b.action));
+        }
         let pi = p as usize;
         let view = t.view(p, &[]);
         let clock = Instant::now();
@@ -318,7 +443,14 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
             Some(Command::Act { action }) => {
                 match apply_recorded(&t.state, p, action) {
                     Ok((next, events)) => {
-                        t.commit(&mut seats, next, events, &mut counts, &mut records);
+                        t.commit(
+                            &mut seats,
+                            next,
+                            events,
+                            &mut counts,
+                            &mut records,
+                            &mut diag,
+                        );
                         seats[pi].committed(&Command::Act { action }, &view);
                     }
                     Err(_) => {
@@ -328,7 +460,14 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                         };
                         let (next, events) =
                             apply_recorded(&t.state, p, action).map_err(|e| e.to_string())?;
-                        t.commit(&mut seats, next, events, &mut counts, &mut records);
+                        t.commit(
+                            &mut seats,
+                            next,
+                            events,
+                            &mut counts,
+                            &mut records,
+                            &mut diag,
+                        );
                     }
                 }
                 actions += 1;
@@ -408,7 +547,14 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                                 receive,
                             };
                             if let Ok((next, events)) = apply_recorded(&t.state, p, trade) {
-                                t.commit(&mut seats, next, events, &mut counts, &mut records);
+                                t.commit(
+                                    &mut seats,
+                                    next,
+                                    events,
+                                    &mut counts,
+                                    &mut records,
+                                    &mut diag,
+                                );
                                 seats[ri].committed(
                                     &Command::AcceptTrade {
                                         offer_id: offer.id.clone(),
@@ -484,7 +630,14 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                                     receive: *counter_give,
                                 };
                                 if let Ok((next, events)) = apply_recorded(&t.state, p, trade) {
-                                    t.commit(&mut seats, next, events, &mut counts, &mut records);
+                                    t.commit(
+                                        &mut seats,
+                                        next,
+                                        events,
+                                        &mut counts,
+                                        &mut records,
+                                        &mut diag,
+                                    );
                                     seats[pi].committed(
                                         &Command::AcceptTrade {
                                             offer_id: counter.id.clone(),
@@ -564,7 +717,14 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                 };
                 let (next, events) =
                     apply_recorded(&t.state, p, action).map_err(|e| e.to_string())?;
-                t.commit(&mut seats, next, events, &mut counts, &mut records);
+                t.commit(
+                    &mut seats,
+                    next,
+                    events,
+                    &mut counts,
+                    &mut records,
+                    &mut diag,
+                );
                 actions += 1;
                 turn_actions += 1;
             }
@@ -588,5 +748,15 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
         duration_ms: started.elapsed().as_secs_f64() * 1000.0,
         seats: records,
         events: counts,
+        predict_diag: diag.map(|d| {
+            serde_json::json!({
+                "observer": d.observer,
+                "per_seat": (0..n).map(|q| serde_json::json!({
+                    "seat": q,
+                    "matches": d.matches[q],
+                    "builds": d.builds[q],
+                })).collect::<Vec<_>>(),
+            })
+        }),
     })
 }

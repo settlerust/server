@@ -49,7 +49,7 @@ fn possible_settlement(s: &State, v: u8) -> bool {
             .all(|&n| s.board.building(n) == 0)
 }
 /// BFS from the seat's network to the best reachable site: (vertex, first edge, distance).
-fn expansion(s: &State, p: u8) -> Option<(u8, Option<u8>, u8)> {
+pub fn expansion(s: &State, p: u8) -> Option<(u8, Option<u8>, u8)> {
     let mut distance = [u8::MAX; 54];
     let mut first = [None; 54];
     let mut queue = Vec::with_capacity(54);
@@ -100,8 +100,16 @@ fn deficit(hand: Resources, cost: Resources) -> u16 {
         .map(|i| u16::from(cost.0[i].saturating_sub(hand.0[i])))
         .sum()
 }
-/// The build the seat is saving toward and its cost.
+/// The build the seat is saving toward and its cost, from the hand it actually holds.
 pub fn target(s: &State, p: u8) -> (Option<Action>, Resources) {
+    target_for(s, p, s.players[p as usize].resources)
+}
+/// The same greedy target choice for an estimated hand: how a builder-like seat would be
+/// saving toward given `hand` and the public board. The action is the next piece the line
+/// completes: the first road toward the expansion site when that site is not adjacent to
+/// the seat's network, the site settlement itself when it is, or a city or a development
+/// card otherwise.
+pub fn target_for(s: &State, p: u8, hand: Resources) -> (Option<Action>, Resources) {
     let own = s.players[p as usize];
     let mut options: Vec<(Action, Resources, f64, u8)> = vec![];
     if own.cities < 4 {
@@ -126,7 +134,7 @@ pub fn target(s: &State, p: u8) -> (Option<Action>, Resources) {
         options.push((action, cost, vertex_score(s, p, vertex) + 0.25, d));
     }
     let score = |cost: Resources, gain: f64, d: u8| {
-        (gain + 0.2) / (1.0 + f64::from(deficit(own.resources, cost)) * 0.15 + f64::from(d) * 0.6)
+        (gain + 0.2) / (1.0 + f64::from(deficit(hand, cost)) * 0.15 + f64::from(d) * 0.6)
     };
     match options
         .into_iter()

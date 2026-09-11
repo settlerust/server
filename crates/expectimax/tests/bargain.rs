@@ -67,7 +67,7 @@ fn threats_follow_the_race_and_shared_ground() {
     s.players[1].cities = 2;
     s.players[2].settlements = 1;
     s.players[2].cities = 0;
-    let threats = bargain::threats(&s, 0);
+    let threats = bargain::threats(&s, 0, false);
     assert_eq!(threats[0].total, 0.0);
     assert!(threats[1].race > 0.6, "{:?}", threats[1]);
     assert!(threats[2].race < 0.2, "{:?}", threats[2]);

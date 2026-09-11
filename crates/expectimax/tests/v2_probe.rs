@@ -31,6 +31,7 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
                     inner_scenarios: 2,
                     node_budget: 1_000_000,
                     leaf_opponents: false,
+                    predict_opponents: false,
                     opening: settlers_expectimax::v2::OpeningMode::Planner,
                 },
                 &never,

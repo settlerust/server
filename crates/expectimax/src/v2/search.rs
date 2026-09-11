@@ -91,6 +91,8 @@ pub struct Limits {
     pub node_budget: u64,
     /// Opponents choose the action that maximizes their own static leaf instead of the builder's.
     pub leaf_opponents: bool,
+    /// Opponents execute their predicted next build instead of following the builder.
+    pub predict_opponents: bool,
     /// Setup candidates come from the opening planner's shortlist unless the search's own
     /// static-leaf shortlist is requested for ablation.
     pub opening: super::OpeningMode,
@@ -985,7 +987,9 @@ impl<'a> Search<'a> {
                         turn_steps = 0;
                     }
                     let p = actor(&s);
-                    let a = if self.limits.leaf_opponents && p != self.seat {
+                    let a = if p != self.seat && self.limits.predict_opponents {
+                        super::predict::act(&s, p, turn_steps)
+                    } else if self.limits.leaf_opponents && p != self.seat {
                         self.leaf_action(&s, p, turn_steps)
                     } else {
                         opponent::act(&s, p, turn_steps)

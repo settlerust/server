@@ -5,6 +5,7 @@ pub mod key;
 pub mod leaf;
 pub mod opening;
 pub mod opponent;
+pub mod predict;
 pub mod search;
 pub mod weights;
 use crate::search::{
@@ -181,6 +182,19 @@ pub struct SearchConfig {
     /// Whether this seat may accept an offer or counter that asks it for more cards than it
     /// receives. `false` stands in for a stubborn partner who refuses every ask.
     pub accept_asks: bool,
+    /// Build prediction switches; see `PredictConfig`.
+    pub predict: PredictConfig,
+}
+/// Build prediction switches. Each is off by default, reproducing the search exactly.
+/// `opponents` makes the lookahead's opponent model execute each opponent's predicted next
+/// build instead of the builder's greedy step-by-step policy; `threat` makes the bargaining
+/// `space` threat key on the other seat's predicted target site instead of scanning this
+/// seat's best three sites for reachability. The denial leaf term is the `denial` weight.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PredictConfig {
+    pub opponents: bool,
+    pub threat: bool,
 }
 /// See `SearchConfig::opening`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -229,6 +243,7 @@ impl Default for SearchConfig {
             counters: true,
             asks: true,
             accept_asks: true,
+            predict: PredictConfig::default(),
         }
     }
 }
@@ -260,6 +275,7 @@ impl SearchConfig {
             inner_scenarios: usize::from(self.inner_scenarios),
             node_budget: self.node_budget,
             leaf_opponents: self.leaf_opponents,
+            predict_opponents: self.predict.opponents,
             opening: if self.builder_setup {
                 OpeningMode::Search
             } else {
@@ -372,7 +388,7 @@ pub fn analyze_with(
     let root = &worlds[0].state;
     let my_turn = actor(root) == seat;
     // Who is dangerous to trade with, and the site the top threat is heading for.
-    let threats = bargain::threats(root, seat);
+    let threats = bargain::threats(root, seat, config.predict.threat);
     let top_threat = bargain::top_threat(&threats, o.settings.players);
     let contested = top_threat.and_then(|(q, _)| bargain::contested_site(root, seat, q));
     let aggression = 0.5 + config.inclinations.clamped().aggression;

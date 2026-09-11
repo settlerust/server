@@ -45,6 +45,10 @@ pub struct Weights {
     pub opponent_sum_point: f64,
     /// Highest opponent expected production, in cards per roll.
     pub opponent_production: f64,
+    /// Discount on a reachable site another seat's predicted line is about to take, per
+    /// unit of the site's production value and per turn of that seat's time-to-afford.
+    /// Zero, the default, never discounts.
+    pub denial: f64,
     /// Terminal win and loss.
     pub terminal: f64,
 }
@@ -71,6 +75,7 @@ impl Default for Weights {
             opponent_max_point: -35.0,
             opponent_sum_point: -6.0,
             opponent_production: -60.0,
+            denial: 0.0,
             terminal: 10_000.0,
         }
     }

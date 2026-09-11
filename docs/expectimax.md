@@ -246,6 +246,7 @@ remain, estimated from `turns_per_player` and the current turn. The terms are:
 | `ports` | Matched 2:1 production × `port_match` and a flat `port_generic` |
 | `opponent_progress` | Highest opponent score × `opponent_max_point` plus all opponents' scores × `opponent_sum_point` |
 | `opponent_production` | Highest opponent production × `opponent_production` |
+| `denial` | Open reachable sites other seats' predicted builds are heading for, each discounted by `1 / (1 + their turns to afford the whole line)`, × `denial` (zero by default, so the term is absent) |
 | `terminal` | ± `terminal` at a finished game |
 
 `Inclinations` are five sliders: `aggression` scales the opponent terms, `risk`
@@ -395,6 +396,41 @@ keeps every switch on. Any two-search cohort in this arena needs a null arm or
 a swapped pair, and the recipient order of a multi-seat offer in
 `crates/arena/src/table.rs`, which always starts after the offerer, should
 rotate.
+
+### Build prediction
+
+`predict` holds three switches, each off by default so a default search is
+unchanged bit for bit. One function, `v2/predict.rs::next_build`, predicts a
+seat's next build from a hand and the public board: it runs the builders' own
+greedy target choice on that hand (a city on the best own settlement, the best
+reachable expansion site with its first road, or a development card), reports
+the next piece the line completes, the site that line ends up taking, and how
+many turns the piece and the whole line are from affordable at that seat's
+production. Inside the search the hand is the seat's sampled hand, so the
+prediction is an expectation over the searcher's belief.
+
+- `weights.denial` (default 0) adds the leaf term above: a site the root seat
+  could still take or block, which an opponent's predicted line is heading for,
+  discounts the leaf by the site's production value and the opponent's
+  time-to-afford. Taking or blocking the site removes the discount.
+- `predict.opponents` makes the lookahead's opponent model execute the
+  predicted build: complete the piece when affordable, otherwise trade toward it
+  with surplus cards or end the turn to save, instead of the builder's greedy
+  step-by-step policy. Setup, discards, robber, and knight plays keep the
+  builder's behaviour.
+- `predict.threat` makes the bargaining `space` threat key on the other seat's
+  predicted target site instead of scanning every one of this seat's best three
+  sites they can reach: only a seat whose predicted line ends on one of those
+  sites counts, weighted by that site's share of the frontier.
+
+The engine arena measures the predictor when run with `--predict-diag SEAT`: at
+every other seat's first main-phase decision of a turn, the table records that
+seat's prediction from the observer seat's public knowledge (the same
+`ResourceKnowledge` estimator a seated policy uses) and compares it with the
+first build the acting seat completes in the same turn; the game record carries
+per-seat match and build counts. Every game record also counts each seat's
+`sites_lost`: settlements other seats built on a vertex this seat could reach
+within three roads just before the build.
 
 ### Learned n-tuple leaf
 

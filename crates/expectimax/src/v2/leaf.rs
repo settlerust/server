@@ -214,6 +214,32 @@ pub fn evaluate(s: &State, p: u8, w: &Weights) -> Terms {
                 + f64::from(others.min(6)) * w.expansion_sites,
         );
     }
+    if own.settlements < 5 && w.denial != 0.0 {
+        // A site another seat's predicted line is about to take, which this seat could still
+        // take or block first, is worth less than the expansion term credits: the value is
+        // discounted by how soon the opponent can pay for it. Taking or blocking the site
+        // removes the discount from every later leaf.
+        let ours = super::bargain::distances(s, p);
+        let mut denial = 0.0f64;
+        for q in 0..s.settings.players {
+            if q == p {
+                continue;
+            }
+            if let Some(build) = super::predict::next_build(s, q, s.players[q as usize].resources)
+                && matches!(
+                    build.action,
+                    Action::BuildSettlement { .. } | Action::BuildRoad { .. }
+                )
+                && let Some(v) = build.site
+                && settlement_allowed(s, p, v, true)
+                && ours[v as usize] <= 3
+            {
+                denial +=
+                    crate::leaf::site_value(s, v) * future * w.denial / (1.0 + build.site_eta);
+            }
+        }
+        t.insert("denial", -denial);
+    }
     t.insert(
         "development",
         (0..4)

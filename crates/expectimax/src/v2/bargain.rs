@@ -21,7 +21,7 @@ pub struct Threat {
     pub total: f64,
 }
 /// Road distances from a seat's network to every intersection; foreign buildings block.
-fn distances(s: &State, p: u8) -> [u8; 54] {
+pub fn distances(s: &State, p: u8) -> [u8; 54] {
     let t = topology();
     let mut distance = [u8::MAX; 54];
     let mut queue = Vec::with_capacity(54);
@@ -58,7 +58,7 @@ fn distances(s: &State, p: u8) -> [u8; 54] {
     distance
 }
 /// The seat's best three reachable sites (value, vertex, distance) within three roads.
-fn frontier(s: &State, p: u8, distance: &[u8; 54]) -> Vec<(f64, u8, u8)> {
+pub fn frontier(s: &State, p: u8, distance: &[u8; 54]) -> Vec<(f64, u8, u8)> {
     let mut sites: Vec<(f64, u8, u8)> = (0..54u8)
         .filter(|&v| distance[v as usize] <= 3 && settlement_allowed(s, p, v, true))
         .map(|v| {
@@ -73,8 +73,12 @@ fn frontier(s: &State, p: u8, distance: &[u8; 54]) -> Vec<(f64, u8, u8)> {
     sites.truncate(3);
     sites
 }
-/// Threat of every other seat from `p`'s perspective (own entry is zero).
-pub fn threats(s: &State, p: u8) -> [Threat; 4] {
+/// Threat of every other seat from `p`'s perspective (own entry is zero). With
+/// `predicted_space`, the `space` component keys on the other seat's predicted next build
+/// instead of scanning every site of `p`'s frontier they can reach: only a seat whose
+/// predicted line ends on one of `p`'s best three sites counts, weighted by that site's
+/// share of the frontier.
+pub fn threats(s: &State, p: u8, predicted_space: bool) -> [Threat; 4] {
     let mut out = [Threat::default(); 4];
     let own_points = f64::from(public_points(s, p));
     let to_win = f64::from(s.settings.points_to_win.max(3));
@@ -89,12 +93,30 @@ pub fn threats(s: &State, p: u8) -> [Threat; 4] {
         }
         let points = f64::from(public_points(s, q));
         let race = ((points - own_points) * 0.15 + points / to_win * 0.7 - 0.15).clamp(0.0, 1.0);
-        let their_distance = distances(s, q);
         let mut contested = 0.0;
-        for &(value, v, d) in &own_sites {
-            let theirs = their_distance[v as usize];
-            if theirs <= 3 && theirs <= d + 1 {
+        if predicted_space {
+            let build = super::predict::next_build(s, q, s.players[q as usize].resources);
+            let takes_site = matches!(
+                build,
+                Some(super::predict::Build {
+                    action: Action::BuildSettlement { .. } | Action::BuildRoad { .. },
+                    ..
+                })
+            );
+            if let (Some(b), true) = (build, takes_site)
+                && let Some(v) = b.site
+                && s.board.building(v) == 0
+                && let Some(&(value, _, _)) = own_sites.iter().find(|&(_, w, _)| *w == v)
+            {
                 contested += value;
+            }
+        } else {
+            let their_distance = distances(s, q);
+            for &(value, v, d) in &own_sites {
+                let theirs = their_distance[v as usize];
+                if theirs <= 3 && theirs <= d + 1 {
+                    contested += value;
+                }
             }
         }
         let space = if own_total > 0.0 {
