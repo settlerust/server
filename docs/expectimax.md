@@ -367,6 +367,18 @@ accepted counter closes the original as `resources_changed`. Explicit declines
 are recorded as `trade_rejected` events. Seat records count `counters`,
 `counters_accepted`, and `declined`.
 
+Four switches separate the mechanisms, all `true` by default. `threat_pricing`
+applies the threat premium on the margin and the partner cost; off, every
+partner is priced at the plain margin. `counters` lets the seat answer an open
+offer with a counter. `asks` lets proposals include two-for-one asks to partners
+known to hold at least two of the wanted resource. Each is effective only while
+`bargain` is on, and `bargain: false` turns all three off at once, so it is the
+all-off control (the control of cohort `0250ba3c` predates the `asks` switch and
+still asked two for one). `accept_asks: false` makes the seat refuse any offer or
+counter that asks it for more cards than it receives, a stand-in for a stubborn
+partner; it changes only what the seat accepts, never what it proposes, and it
+does not depend on `bargain`.
+
 ### Learned n-tuple leaf
 
 `leaf` selects the evaluator. By default the hand-written terms above apply.

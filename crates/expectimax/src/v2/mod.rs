@@ -167,9 +167,20 @@ pub struct SearchConfig {
     /// Term weights of the opening planner.
     pub opening_weights: opening::OpeningWeights,
     /// Threat-aware bargaining: partner threats price every swap, open offers draw counters,
-    /// and refusals are explicit with a reason. `false` is the control: plain acceptance and
-    /// proposals with the reference willingness model and no threat costs.
+    /// and well-stocked partners are asked two for one. `false` is the all-off control: plain
+    /// acceptance and proposals with the reference willingness model, no threat costs, no
+    /// counters, and no asks.
     pub bargain: bool,
+    /// One-change arms of the bargaining, each on by default and effective only while
+    /// `bargain` is on: `threat_pricing` applies the threat premium on the trade margin and
+    /// the partner cost, `counters` answers open offers with counters, and `asks` proposes
+    /// two-for-one asks to partners known to hold plenty.
+    pub threat_pricing: bool,
+    pub counters: bool,
+    pub asks: bool,
+    /// Whether this seat may accept an offer or counter that asks it for more cards than it
+    /// receives. `false` stands in for a stubborn partner who refuses every ask.
+    pub accept_asks: bool,
 }
 /// See `SearchConfig::opening`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -214,6 +225,10 @@ impl Default for SearchConfig {
             opening: OpeningMode::Planner,
             opening_weights: opening::OpeningWeights::default(),
             bargain: true,
+            threat_pricing: true,
+            counters: true,
+            asks: true,
+            accept_asks: true,
         }
     }
 }
@@ -361,10 +376,20 @@ pub fn analyze_with(
     let top_threat = bargain::top_threat(&threats, o.settings.players);
     let contested = top_threat.and_then(|(q, _)| bargain::contested_site(root, seat, q));
     let aggression = 0.5 + config.inclinations.clamped().aggression;
+    // The one-change arms are only effective while bargaining is on; `bargain: false` turns
+    // every one of them off.
+    let counters = config.bargain && config.counters;
+    let asks = config.bargain && config.asks;
+    let threat_pricing = config.bargain && config.threat_pricing;
     let mut decisions = bargain::responses(view, &knowledge, history);
-    if !config.bargain {
-        decisions.retain(|d| !matches!(d.kind, bargain::Kind::Counter { .. }));
-    }
+    decisions.retain(|d| match &d.kind {
+        bargain::Kind::Counter { .. } => counters,
+        // A stubborn seat never accepts terms that ask it for more cards than it receives.
+        bargain::Kind::Accept { offer } => {
+            config.accept_asks || offer.receive.total() <= offer.give.total()
+        }
+        _ => true,
+    });
     if config.propose {
         decisions.extend(bargain::proposals(
             view,
@@ -374,10 +399,13 @@ pub fn analyze_with(
             history,
             offered_turn,
         ));
+        if !asks {
+            decisions.retain(|d| !matches!(d.kind, bargain::Kind::Offer { ask: true, .. }));
+        }
     }
     // Margin and cost of dealing with a seat: the plain margin plus a threat premium, and a
     // share of what the partner gains scaled by their threat and this seat's aggression.
-    let threat_scale = if config.bargain { 1.0 } else { 0.0 };
+    let threat_scale = if threat_pricing { 1.0 } else { 0.0 };
     let margin_for = |q: u8| margin + threats[q as usize].total * 30.0 * threat_scale;
     let threat_cost =
         |q: u8, gain: f64| threats[q as usize].total * aggression * 0.5 * gain * threat_scale;
@@ -696,12 +724,13 @@ pub fn analyze_with(
                         if feasible.is_empty() {
                             continue;
                         }
+                        // The partner gets what this seat gives and pays what it receives.
                         let gain = worlds
                             .iter()
                             .map(|w| {
                                 w.weight
                                     * bargain::partner_gain(
-                                        &w.state, partner, receive, give, card_value, point,
+                                        &w.state, partner, give, receive, card_value, point,
                                     )
                             })
                             .sum::<f64>();
