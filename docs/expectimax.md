@@ -367,6 +367,24 @@ accepted counter closes the original as `resources_changed`. Explicit declines
 are recorded as `trade_rejected` events. Seat records count `counters`,
 `counters_accepted`, and `declined`.
 
+### Robber targeting
+
+Robber placements are shortlisted by a static score and then valued by the
+lookahead like any other action. The score adds, per hex, the blocked pips of
+every rival building (cities double, weighted by the blocked seat's public
+points), and per victim a bonus for hand size and public points; the four
+highest-scoring placements enter the search. Three switches change that score,
+each testing one hypothesis against the original behaviour:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `robber.leader` | false | The hex score counts the points leader's blocked pips in full and every other seat's at a tenth, so the shortlist is led by the leader's own best hex |
+| `robber.need` | false | The victim bonus replaces hand size with `2.8 ×` the expected share of the resource this seat most needs, from this seat's resource knowledge (the seat's largest missing-card gap toward the builds it is closest to affording) |
+| `robber.threat` | false | Each seat's blocked pips are weighted by `1 + 2 ×` their threat, and a victim whose threat is below 0.5 is never robbed while any placement robbing a threatening seat exists |
+
+The need bonus reads the expected-hand estimate taken at the root of the
+decision; a hand that already affords every build keeps the hand-size bonus.
+
 ### Learned n-tuple leaf
 
 `leaf` selects the evaluator. By default the hand-written terms above apply.

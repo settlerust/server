@@ -94,6 +94,11 @@ pub struct Limits {
     /// Setup candidates come from the opening planner's shortlist unless the search's own
     /// static-leaf shortlist is requested for ablation.
     pub opening: super::OpeningMode,
+    /// Robber candidate scoring switches; see `RobberConfig`.
+    pub robber: super::RobberConfig,
+    /// Expected hidden-hand composition per seat from the analyzing seat's resource knowledge,
+    /// used by the need-aware victim bonus. None disables it.
+    pub expected_hands: Option<[[f64; 5]; 4]>,
 }
 pub struct Search<'a> {
     pub seat: u8,
@@ -392,6 +397,32 @@ impl<'a> Search<'a> {
             .collect()
     }
     fn robber_candidates(&self, s: &State, p: u8, cap: usize) -> Vec<Action> {
+        let scored = self.robber_rows(s, p);
+        if scored.is_empty() {
+            return vec![opponent::robber(s, p)];
+        }
+        let mut scored = scored;
+        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
+        scored.into_iter().take(cap).map(|(_, a)| a).collect()
+    }
+    /// Every legal robber placement with its static score, before the shortlist cut. The
+    /// score is a ranking heuristic for the shortlist, not the value the lookahead assigns.
+    fn robber_rows(&self, s: &State, p: u8) -> Vec<(f64, Action)> {
+        let cfg = self.limits.robber;
+        let threats = cfg.threat.then(|| super::bargain::threats(s, p));
+        let leader = cfg
+            .leader
+            .then(|| {
+                (0..s.settings.players)
+                    .filter(|&o| o != p)
+                    .max_by_key(|&o| (public_points(s, o), std::cmp::Reverse(o)))
+            })
+            .flatten();
+        let needed = if cfg.need {
+            Self::needed_resource(s, p, &self.w)
+        } else {
+            None
+        };
         let mut scored: Vec<(f64, Action)> = Vec::new();
         for hex in 0..19u8 {
             if hex == s.robber {
@@ -399,29 +430,50 @@ impl<'a> Search<'a> {
             }
             let pips = f64::from(6u8.saturating_sub(s.layout.number(hex).abs_diff(7)));
             let mut blocked = 0.0;
+            let mut leader_blocked = 0.0;
             let mut own = false;
             for &v in &topology().hex_vertices[hex as usize] {
                 if let Some(o) = s.board.owner(v) {
                     let scale = if s.board.building(v) > 4 { 2.0 } else { 1.0 };
                     if o == p {
                         own = true;
-                    } else {
-                        blocked += pips * scale * (1.0 + f64::from(public_points(s, o)) * 0.15);
+                        continue;
+                    }
+                    let mut term = pips * scale * (1.0 + f64::from(public_points(s, o)) * 0.15);
+                    if let Some(threats) = &threats {
+                        term *= 1.0 + 2.0 * threats[o as usize].total;
+                    }
+                    blocked += term;
+                    if Some(o) == leader {
+                        leader_blocked += term;
                     }
                 }
             }
             if own || s.layout.resource(hex).is_none() {
                 continue;
             }
+            let hex_score = if leader.is_some() {
+                leader_blocked + 0.1 * (blocked - leader_blocked)
+            } else {
+                blocked
+            };
             let victims = robber_victims(s, p, hex);
             if victims.is_empty() {
-                scored.push((blocked, Action::MoveRobber { hex, victim: None }));
+                scored.push((hex_score, Action::MoveRobber { hex, victim: None }));
             }
             for v in victims {
                 let cards = f64::from(s.players[v as usize].resources.total()).min(8.0);
-                let bonus = 1.0 + cards * 0.4 + f64::from(public_points(s, v)) * 0.3;
+                let hand_term = match (needed, self.limits.expected_hands) {
+                    (Some(r), Some(table)) => {
+                        let expected = table[v as usize];
+                        let total = expected.iter().sum::<f64>().max(1.0);
+                        expected[r] / total * 2.8
+                    }
+                    _ => cards * 0.4,
+                };
+                let bonus = 1.0 + hand_term + f64::from(public_points(s, v)) * 0.3;
                 scored.push((
-                    blocked + bonus,
+                    hex_score + bonus,
                     Action::MoveRobber {
                         hex,
                         victim: Some(v),
@@ -429,11 +481,56 @@ impl<'a> Search<'a> {
                 ));
             }
         }
-        if scored.is_empty() {
-            return vec![opponent::robber(s, p)];
+        // Never steal from a seat this seat wants to keep trading with while any placement
+        // robbing a threatening seat exists.
+        if let Some(threats) = &threats {
+            let has_safe_victim = scored.iter().any(|(_, a)| {
+                matches!(
+                    a,
+                    Action::MoveRobber {
+                        victim: Some(v),
+                        ..
+                    } if threats[*v as usize].total >= 0.5
+                )
+            });
+            if has_safe_victim {
+                scored.retain(|(_, a)| {
+                    !matches!(
+                        a,
+                        Action::MoveRobber {
+                            victim: Some(v),
+                            ..
+                        } if threats[*v as usize].total < 0.5
+                    )
+                });
+            }
         }
-        scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-        scored.into_iter().take(cap).map(|(_, a)| a).collect()
+        scored
+    }
+    /// The resource this seat most needs: the largest missing-card gap toward the builds it
+    /// is closest to affording, tie-broken by the leaf's resource values. None when the hand
+    /// already affords every build.
+    fn needed_resource(s: &State, p: u8, w: &Weights) -> Option<usize> {
+        let own = s.players[p as usize].resources;
+        let mut need = [0.0f64; 5];
+        for cost in [
+            Resources::CITY,
+            Resources::SETTLEMENT,
+            Resources::DEVELOPMENT,
+            Resources::ROAD,
+        ] {
+            let weight = 1.0 / (1.0 + crate::leaf::deficit(own, cost));
+            for (r, &missing) in cost.0.iter().enumerate() {
+                need[r] += f64::from(missing.saturating_sub(own.0[r])) * weight;
+            }
+        }
+        (0..5)
+            .max_by(|&a, &b| {
+                need[a]
+                    .total_cmp(&need[b])
+                    .then(w.resource_value[a].total_cmp(&w.resource_value[b]))
+            })
+            .filter(|&r| need[r] > 0.0)
     }
     fn deficits(own: Resources) -> [(Resources, f64); 4] {
         [
@@ -1077,3 +1174,7 @@ impl<'a> Search<'a> {
         Ok(total)
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/internal/v2_robber.rs"]
+mod robber_tests;

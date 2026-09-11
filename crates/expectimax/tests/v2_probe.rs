@@ -32,6 +32,8 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
                     node_budget: 1_000_000,
                     leaf_opponents: false,
                     opening: settlers_expectimax::v2::OpeningMode::Planner,
+                    robber: settlers_expectimax::v2::RobberConfig::default(),
+                    expected_hands: None,
                 },
                 &never,
                 settlers_expectimax::v2::Leaf::Hand,
