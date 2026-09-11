@@ -26,6 +26,8 @@ fn limits() -> Limits {
         knight_play_value: false,
         buy_tempo: false,
         hold_knight: false,
+        spend_down: false,
+        discard_projection: false,
     }
 }
 /// The root candidate list of seat `p` under the given switches, on the true state.
