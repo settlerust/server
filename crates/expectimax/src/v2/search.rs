@@ -81,6 +81,7 @@ pub struct Stats {
     pub per_level_afterstates: Vec<u64>,
     pub aborted: bool,
 }
+#[derive(Debug, Clone, Copy)]
 pub struct Limits {
     pub depth: u8,
     pub beam: usize,
@@ -105,6 +106,14 @@ pub struct Limits {
     /// The bargaining `space` threat keys on predicted target sites instead of the best
     /// three sites; the robber threat arm uses the same definition.
     pub predict_threat: bool,
+    /// Hand-leaf development term: value played knights by largest-army distance and credit a
+    /// held playable knight with the production it would unblock.
+    pub knight_play_value: bool,
+    /// Offer a development purchase only when no build is affordable within the next own turn.
+    pub buy_tempo: bool,
+    /// Offer main-phase knight plays only when the robber sits on this seat's best hex, so the
+    /// knight is held for the before-the-roll unblock.
+    pub hold_knight: bool,
 }
 pub struct Search<'a> {
     pub seat: u8,
@@ -508,7 +517,12 @@ impl<'a> Search<'a> {
     /// Static value of a position from seat `p`'s perspective under the configured leaf.
     #[inline]
     pub fn value(&self, s: &State, p: u8) -> Terms {
-        self.model.evaluate(s, p, &self.w)
+        match &self.model {
+            super::Leaf::Hand => {
+                super::leaf::evaluate_with(s, p, &self.w, self.limits.knight_play_value)
+            }
+            tables => tables.evaluate(s, p, &self.w),
+        }
     }
     fn tick(&mut self, n: u64) {
         self.stats.transitions += n;
@@ -613,6 +627,39 @@ impl<'a> Search<'a> {
             self.limits.expected_hands,
             self.limits.predict_threat,
         )
+    }
+    /// Whether a road, settlement, or city is affordable now or within the next own turn at
+    /// current production, using the leaf's acquisition-time estimate. The `buy_tempo` rule
+    /// offers a development purchase only when this is false.
+    fn build_within_turn(&self, s: &State, p: u8) -> bool {
+        let own = s.players[p as usize];
+        let rates = super::leaf::rates(s, p);
+        let soon = |cost: Resources| super::leaf::eta_turns(s, own.resources, cost, &rates) <= 1.0;
+        (own.cities < 4 && (0..54u8).any(|v| s.board.building(v) == p + 1) && soon(Resources::CITY))
+            || (own.settlements < 5 && soon(Resources::SETTLEMENT))
+            || (own.roads < 15 && soon(Resources::ROAD))
+    }
+    /// Whether the robber sits on this seat's best-producing hex: the one a held knight is
+    /// saved to unblock before the roll under the `hold_knight` rule.
+    fn robber_on_best(&self, s: &State, p: u8) -> bool {
+        let mut best: Option<(f64, u8)> = None;
+        for hex in 0..19u8 {
+            let Some(resource) = s.layout.resource(hex) else {
+                continue;
+            };
+            let pips = f64::from(6u8.saturating_sub(s.layout.number(hex).abs_diff(7)));
+            let mut rate = 0.0;
+            for &v in &topology().hex_vertices[hex as usize] {
+                if s.board.owner(v) == Some(p) {
+                    rate += pips / 36.0 * if s.board.building(v) > 4 { 2.0 } else { 1.0 };
+                }
+            }
+            let value = rate * self.w.resource_value[resource as usize];
+            if value > 0.0 && best.as_ref().is_none_or(|b| value > b.0) {
+                best = Some((value, hex));
+            }
+        }
+        best.is_some_and(|(_, hex)| hex == s.robber)
     }
     fn deficits(own: Resources) -> [(Resources, f64); 4] {
         [
@@ -821,7 +868,9 @@ impl<'a> Search<'a> {
             }
         }
         if !s.played_development {
-            if own.development[Development::Knight as usize] > 0 {
+            if own.development[Development::Knight as usize] > 0
+                && (!self.limits.hold_knight || self.robber_on_best(s, p))
+            {
                 out.push(Action::PlayKnight);
             }
             if own.development[Development::RoadBuilding as usize] > 0
@@ -848,7 +897,10 @@ impl<'a> Search<'a> {
                 }
             }
         }
-        if s.deck_count() > 0 && own.resources.contains(Resources::DEVELOPMENT) {
+        if s.deck_count() > 0
+            && own.resources.contains(Resources::DEVELOPMENT)
+            && (!self.limits.buy_tempo || !self.build_within_turn(s, p))
+        {
             out.push(Action::BuyDevelopment);
         }
         out.extend(self.useful_roads(s, p, 4));

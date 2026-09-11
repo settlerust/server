@@ -37,7 +37,7 @@ pub fn reach(s: &State, p: u8) -> (f64, u32) {
     (value / (1.0 + f64::from(distance)), others)
 }
 /// Turns until a cost is affordable from the hand at the seat's production per own turn.
-fn eta_turns(s: &State, hand: Resources, cost: Resources, rates: &[f64; 5]) -> f64 {
+pub fn eta_turns(s: &State, hand: Resources, cost: Resources, rates: &[f64; 5]) -> f64 {
     let per_turn = f64::from(s.settings.players);
     (0..5)
         .map(|r| f64::from(cost.0[r].saturating_sub(hand.0[r])) / (rates[r] * per_turn + 0.03))
@@ -206,7 +206,58 @@ pub fn expected_next_gain(s: &State, q: u8) -> f64 {
     }
     best
 }
+/// Knights the seat still needs to take the largest army: at least three, and strictly more
+/// than the best opponent. Zero when the seat already holds the award.
+pub fn army_need(s: &State, p: u8) -> u8 {
+    if s.largest_army == Some(p) {
+        return 0;
+    }
+    let best_other = (0..s.settings.players)
+        .filter(|&o| o != p)
+        .map(|o| s.players[o as usize].played_knights)
+        .max()
+        .unwrap_or(0);
+    (best_other.max(2) + 1).saturating_sub(s.players[p as usize].played_knights)
+}
+/// The `knight_play_value` schedule: played knights are worth more the closer the seat is to
+/// taking the largest army (two away, one away, taking it) rather than the flat weight.
+fn army_tier(need: u8) -> f64 {
+    match need {
+        0 => 1.25, // holds the award: the knights spent on it defend the two points
+        1 => 1.75, // one knight away
+        2 => 1.0,  // two away
+        _ => 0.5,  // three or more away
+    }
+}
+/// Per-roll production of the seat's buildings on the robber's hex: what a knight play
+/// would unblock. Zero when the robber blocks nothing of this seat's.
+pub fn robbed_production(s: &State, p: u8, w: &Weights) -> f64 {
+    if s.layout.resource(s.robber).is_none() {
+        return 0.0;
+    }
+    let pips = f64::from(6u8.saturating_sub(s.layout.number(s.robber).abs_diff(7)));
+    if pips == 0.0 {
+        return 0.0;
+    }
+    let mut rate = 0.0;
+    for &v in &topology().hex_vertices[s.robber as usize] {
+        if s.board.owner(v) == Some(p) {
+            rate += pips / 36.0 * if s.board.building(v) > 4 { 2.0 } else { 1.0 };
+        }
+    }
+    let resource = s
+        .layout
+        .resource(s.robber)
+        .map(|r| w.resource_value[r as usize]);
+    rate * resource.unwrap_or(0.0)
+}
 pub fn evaluate(s: &State, p: u8, w: &Weights) -> Terms {
+    evaluate_with(s, p, w, false)
+}
+/// The hand-written leaf. With `knight_play_value` the development term values played
+/// knights by largest-army distance and credits a held playable knight with one roll of the
+/// production it would unblock; without it the flat weights apply.
+pub fn evaluate_with(s: &State, p: u8, w: &Weights, knight_play_value: bool) -> Terms {
     let own = s.players[p as usize];
     let rates = rates(s, p);
     let mut t = BTreeMap::new();
@@ -313,14 +364,21 @@ pub fn evaluate(s: &State, p: u8, w: &Weights) -> Terms {
         }
         t.insert("denial", -denial);
     }
-    t.insert(
-        "development",
-        (0..4)
-            .map(|r| f64::from(own.development[r] + own.new_development[r]))
-            .sum::<f64>()
-            * w.development
-            + f64::from(own.played_knights) * w.knight,
-    );
+    let held: f64 = (0..4)
+        .map(|r| f64::from(own.development[r] + own.new_development[r]))
+        .sum();
+    let knights = if knight_play_value {
+        let played = f64::from(own.played_knights) * w.knight * army_tier(army_need(s, p));
+        let unblock = if own.development[Development::Knight as usize] > 0 {
+            robbed_production(s, p, w) * w.card_value
+        } else {
+            0.0
+        };
+        played + unblock
+    } else {
+        f64::from(own.played_knights) * w.knight
+    };
+    t.insert("development", held * w.development + knights);
     let length = if own.roads >= 4 {
         road_length(s, p)
     } else {
