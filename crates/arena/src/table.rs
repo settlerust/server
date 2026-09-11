@@ -338,9 +338,20 @@ impl Table {
                     }
                 }
                 Event::AwardsChanged {
-                    longest_road: Some(holder),
-                    ..
-                } => records[holder as usize].road_awards += 1,
+                    longest_road,
+                    largest_army,
+                } => {
+                    if let Some(holder) = longest_road
+                        && self.state.longest_road != Some(holder)
+                    {
+                        records[holder as usize].road_awards += 1;
+                    }
+                    if let Some(holder) = largest_army
+                        && self.state.largest_army != Some(holder)
+                    {
+                        records[holder as usize].army_awards += 1;
+                    }
+                }
                 Event::BoughtDevelopment { player } => {
                     records[player as usize].development_bought += 1
                 }
@@ -348,12 +359,6 @@ impl Table {
                     player,
                     card: Development::Knight,
                 } => records[player as usize].knights_played += 1,
-                Event::AwardsChanged {
-                    largest_army: Some(holder),
-                    ..
-                } if self.state.largest_army != Some(holder) => {
-                    records[holder as usize].army_awards += 1
-                }
                 Event::BankTraded { player, .. } => records[player as usize].bank_trades += 1,
                 Event::Traded { player, other, .. } => {
                     records[player as usize].player_trades += 1;
