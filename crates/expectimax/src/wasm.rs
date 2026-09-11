@@ -37,6 +37,26 @@ fn now_ms() -> f64 {
         .as_secs_f64()
         * 1000.0
 }
+/// The opening planner's placement for the seated view during setup, as an action JSON, or
+/// `null` outside setup. Builders that never run the search share the same placements.
+#[wasm_bindgen]
+pub fn opening_placement(json: &str) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct Input {
+        view: GameView,
+    }
+    let input: Input = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let Some(o) = &input.view.game else {
+        return Ok("null".into());
+    };
+    let Some(seat) = o.seat else {
+        return Ok("null".into());
+    };
+    let action = crate::v2::opening::from_observation(o)
+        .and_then(|state| crate::v2::opening::place(&state, seat))
+        .filter(|action| o.legal_actions.contains(action));
+    serde_json::to_string(&action).map_err(|e| e.to_string())
+}
 #[wasm_bindgen]
 impl ExpectimaxPlayer {
     #[wasm_bindgen(constructor)]

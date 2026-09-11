@@ -1,7 +1,9 @@
 //! `expectimax-v2`: a tunable turn-level expectimax with iterative deepening. See
 //! `docs/expectimax.md` for the exact semantics of every setting.
+pub mod bargain;
 pub mod key;
 pub mod leaf;
+pub mod opening;
 pub mod opponent;
 pub mod search;
 pub mod weights;
@@ -16,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use settlers_engine::*;
 use settlers_protocol::knowledge::ResourceKnowledge;
 use settlers_protocol::{EventBatch, GameView, OfferStatus};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 pub use weights::{Inclinations, Weights};
 
@@ -156,6 +159,25 @@ pub struct SearchConfig {
     /// whenever no node or time budget binds, and completes more of the tree when one does;
     /// `turn` also reuses values computed under the earlier decisions' sampled hands.
     pub cache: CacheMode,
+    /// How the two setup settlements and their roads are placed: `planner` ranks portfolios
+    /// of the two sites under discrete strategies with the draft predicted (the default);
+    /// `search` keeps the planner's shortlist but lets the lookahead rank it; `builder_setup`
+    /// above overrides both with the plain builder heuristic.
+    pub opening: OpeningMode,
+    /// Term weights of the opening planner.
+    pub opening_weights: opening::OpeningWeights,
+    /// Threat-aware bargaining: partner threats price every swap, open offers draw counters,
+    /// and refusals are explicit with a reason. `false` is the control: plain acceptance and
+    /// proposals with the reference willingness model and no threat costs.
+    pub bargain: bool,
+}
+/// See `SearchConfig::opening`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpeningMode {
+    #[default]
+    Planner,
+    Search,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -189,6 +211,9 @@ impl Default for SearchConfig {
             deepen_gap: 0.0,
             explain: false,
             cache: CacheMode::None,
+            opening: OpeningMode::Planner,
+            opening_weights: opening::OpeningWeights::default(),
+            bargain: true,
         }
     }
 }
@@ -220,6 +245,11 @@ impl SearchConfig {
             inner_scenarios: usize::from(self.inner_scenarios),
             node_budget: self.node_budget,
             leaf_opponents: self.leaf_opponents,
+            opening: if self.builder_setup {
+                OpeningMode::Search
+            } else {
+                self.opening
+            },
         }
     }
 }
@@ -227,7 +257,26 @@ struct RootValue {
     value: leaf::Terms,
     trade: Option<TradeAnalysis>,
 }
-type Row = (Option<settlers_protocol::Command>, Action, RootValue);
+/// One root candidate: its command (none for waiting), the action it stands for, its value,
+/// and the explanation and table talk that go with it.
+struct Row {
+    command: Option<settlers_protocol::Command>,
+    action: Action,
+    root: RootValue,
+    note: Option<String>,
+    speech: Option<String>,
+}
+impl Row {
+    fn plain(command: Option<settlers_protocol::Command>, action: Action, root: RootValue) -> Self {
+        Self {
+            command,
+            action,
+            root,
+            note: None,
+            speech: None,
+        }
+    }
+}
 /// A completed depth: rows, statistics, and the recorded outcomes per plain action.
 type Completed = (u8, Vec<Row>, search::Stats, Vec<Vec<search::Outcome>>);
 fn actor(s: &State) -> u8 {
@@ -305,12 +354,35 @@ pub fn analyze_with(
         [1.0; 4]
     };
     let margin = config.inclinations.trade_margin();
-    let mut decisions = trades::candidates(view, &knowledge, offered_turn);
-    if !config.propose {
-        decisions.retain(|d| !d.offer);
-    }
     let root = &worlds[0].state;
     let my_turn = actor(root) == seat;
+    // Who is dangerous to trade with, and the site the top threat is heading for.
+    let threats = bargain::threats(root, seat);
+    let top_threat = bargain::top_threat(&threats, o.settings.players);
+    let contested = top_threat.and_then(|(q, _)| bargain::contested_site(root, seat, q));
+    let aggression = 0.5 + config.inclinations.clamped().aggression;
+    let mut decisions = bargain::responses(view, &knowledge, history);
+    if !config.bargain {
+        decisions.retain(|d| !matches!(d.kind, bargain::Kind::Counter { .. }));
+    }
+    if config.propose {
+        decisions.extend(bargain::proposals(
+            view,
+            &knowledge,
+            &threats,
+            0.75,
+            history,
+            offered_turn,
+        ));
+    }
+    // Margin and cost of dealing with a seat: the plain margin plus a threat premium, and a
+    // share of what the partner gains scaled by their threat and this seat's aggression.
+    let threat_scale = if config.bargain { 1.0 } else { 0.0 };
+    let margin_for = |q: u8| margin + threats[q as usize].total * 30.0 * threat_scale;
+    let threat_cost =
+        |q: u8, gain: f64| threats[q as usize].total * aggression * 0.5 * gain * threat_scale;
+    let card_value = weights.card_value;
+    let point = weights.point;
     match config.cache {
         CacheMode::None | CacheMode::Decision => cache.clear(),
         CacheMode::Turn => {
@@ -348,6 +420,98 @@ pub fn analyze_with(
                 )
         });
     }
+    // Setup placements come straight from the opening planner: the lookahead through the
+    // first rolls adds noise, not information, and the planner already predicts the draft.
+    let in_setup = matches!(
+        root.phase,
+        Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+    );
+    if my_turn && in_setup && config.opening == OpeningMode::Planner && !config.builder_setup {
+        let bias = opening::Bias {
+            expansion: config.inclinations.expansion,
+            development: config.inclinations.development,
+            weights: config.opening_weights,
+        };
+        let mut candidates: Vec<Candidate> = Vec::new();
+        match root.phase {
+            Phase::SetupSettlement { .. } => {
+                for plan in opening::rank_settlements(root, seat, 0, &bias) {
+                    let action = Action::BuildSettlement {
+                        vertex: plan.vertex,
+                    };
+                    if !o.legal_actions.contains(&action) {
+                        continue;
+                    }
+                    let mut line = vec![action];
+                    if let Some(partner) = plan.partner
+                        && partner != plan.vertex
+                        && root.board.owner(partner).is_none()
+                    {
+                        line.push(Action::BuildSettlement { vertex: partner });
+                    }
+                    candidates.push(Candidate {
+                        id: String::new(),
+                        command: Some(settlers_protocol::Command::Act { action }),
+                        expected_value: plan.value,
+                        minimum_leaf_value: plan.value,
+                        maximum_leaf_value: plan.value,
+                        contributions: Contributions(
+                            plan.terms
+                                .named()
+                                .into_iter()
+                                .map(|(k, v)| (k.to_string(), v))
+                                .collect(),
+                        ),
+                        trade: None,
+                        principal_variation: line,
+                        note: Some(opening::describe(&plan, &root.layout)),
+                        speech: None,
+                    });
+                }
+            }
+            Phase::SetupRoad { vertex, .. } => {
+                for (edge, value, target) in opening::rank_roads(root, seat, vertex) {
+                    let action = Action::BuildRoad { edge };
+                    if !o.legal_actions.contains(&action) {
+                        continue;
+                    }
+                    candidates.push(Candidate {
+                        id: String::new(),
+                        command: Some(settlers_protocol::Command::Act { action }),
+                        expected_value: value,
+                        minimum_leaf_value: value,
+                        maximum_leaf_value: value,
+                        contributions: Contributions(BTreeMap::from([(
+                            "expansion".to_string(),
+                            value,
+                        )])),
+                        trade: None,
+                        principal_variation: vec![action],
+                        note: target.map(|w| format!("road toward site {w}")),
+                        speech: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+        if !candidates.is_empty() {
+            return Ok(finish_report(
+                &config,
+                view,
+                o,
+                seat,
+                leaf,
+                knowledge,
+                candidates,
+                search::Stats::default(),
+                0,
+                actions.len(),
+                cache,
+                clock(),
+                None,
+            ));
+        }
+    }
     let deadline_ms = config.time_budget_ms;
     let over_time = || deadline_ms > 0.0 && clock() >= deadline_ms;
     let mut best_report: Option<Completed> = None;
@@ -377,112 +541,415 @@ pub fn analyze_with(
                 break;
             }
             best_plain = Some(best_plain.map_or(value.total(), |b: f64| b.max(value.total())));
-            rows.push((
+            rows.push(Row::plain(
                 Some(settlers_protocol::Command::Act { action: *a }),
                 *a,
                 RootValue { value, trade: None },
             ));
         }
+        // The value of answering nothing: the opponents' round from here (off turn only).
+        let wait_value = if !search.aborted && !my_turn && !decisions.is_empty() {
+            Some(search.round(&worlds, 0)?)
+        } else {
+            None
+        };
+        let fallback_plain = best_plain.or(wait_value.as_ref().map(|v| v.total()));
+        // Accept values per offer id, for the counters' fallback and the decline reasons.
+        let mut accept_totals: BTreeMap<String, f64> = BTreeMap::new();
+        let mut counter_best: BTreeMap<String, f64> = BTreeMap::new();
+        // Per-partner proposal analyses, for the combined offers to every safe partner.
+        let mut per_partner: Vec<PartnerOffer> = Vec::new();
         if !search.aborted {
-            for d in decisions
-                .iter()
-                .filter(|d| d.offer || matches!(d.action, Action::Trade { .. }))
-            {
+            for d in &decisions {
                 if search.aborted {
                     break;
                 }
-                let Action::Trade { .. } = d.action else {
+                let Action::Trade {
+                    other: partner,
+                    give,
+                    receive,
+                } = d.action
+                else {
                     continue;
                 };
-                let value = if d.offer {
-                    let Some(best_plain) = best_plain else {
-                        continue;
-                    };
-                    let mut accepted = Vec::new();
-                    let mut affordable = 0.0;
-                    let mut unlocked = Vec::new();
-                    let partner = match d.action {
-                        Action::Trade { other, .. } => other as usize,
-                        _ => 0,
-                    };
-                    for w in &worlds {
-                        let prob = trades::acceptance(&w.state, seat, d.action)
-                            * (0.5 + config.inclinations.trade)
-                            * partner_factor[partner];
-                        if let Ok(after) = apply(&w.state, seat, d.action) {
-                            affordable += w.weight;
-                            for a in trades::unlocked(&w.state, &after, seat) {
-                                if !unlocked.contains(&a) {
-                                    unlocked.push(a);
+                match &d.kind {
+                    bargain::Kind::Offer { partner: _, ask } => {
+                        let Some(best_plain) = best_plain else {
+                            continue;
+                        };
+                        let mut accepted = Vec::new();
+                        let mut affordable = 0.0;
+                        let mut unlocked = Vec::new();
+                        let mut gain = 0.0;
+                        for w in &worlds {
+                            let prob = trades::acceptance(&w.state, seat, d.action)
+                                * (0.5 + config.inclinations.trade)
+                                * partner_factor[partner as usize]
+                                * if *ask { 0.85 } else { 1.0 };
+                            if let Ok(after) = apply(&w.state, seat, d.action) {
+                                affordable += w.weight;
+                                for a in trades::unlocked(&w.state, &after, seat) {
+                                    if !unlocked.contains(&a) {
+                                        unlocked.push(a);
+                                    }
                                 }
+                                gain += w.weight
+                                    * bargain::partner_gain(
+                                        &w.state, partner, give, receive, card_value, point,
+                                    );
+                                accepted.push(World {
+                                    state: after,
+                                    weight: w.weight * prob.min(1.0),
+                                });
                             }
-                            accepted.push(World {
-                                state: after,
-                                weight: w.weight * prob.min(1.0),
-                            });
+                        }
+                        let probability: f64 = accepted.iter().map(|w| w.weight).sum();
+                        if probability <= 1e-9 {
+                            continue;
+                        }
+                        if affordable > 0.0 {
+                            gain /= affordable;
+                        }
+                        let accepted_value = search.plan(accepted, 1)?.0;
+                        if search.aborted {
+                            break;
+                        }
+                        let accepted_total = accepted_value.total();
+                        let cost = threat_cost(partner, gain);
+                        let mut value = leaf::Terms::default();
+                        value.0.insert(
+                            "expected",
+                            best_plain + probability * (accepted_total - best_plain),
+                        );
+                        value.0.insert("trade_margin", -margin_for(partner));
+                        value.0.insert("partner_threat", -probability * cost);
+                        per_partner.push((
+                            give,
+                            receive,
+                            partner,
+                            probability,
+                            accepted_total,
+                            cost,
+                            unlocked.clone(),
+                        ));
+                        let block = blocks(&unlocked, contested)
+                            .then_some(top_threat.map(|t| t.0))
+                            .flatten();
+                        let text = bargain::offer_text(
+                            view,
+                            &[partner],
+                            give,
+                            receive,
+                            &unlocked,
+                            block,
+                            *ask,
+                        );
+                        let command = settlers_protocol::Command::OfferTrade {
+                            to: vec![partner],
+                            give,
+                            receive,
+                            message: Some(settlers_protocol::Communication {
+                                intent: settlers_protocol::Intent::RequestTrade,
+                                resources: Some(receive),
+                                text: Some(text),
+                            }),
+                        };
+                        rows.push(Row {
+                            command: Some(command),
+                            action: d.action,
+                            root: RootValue {
+                                value,
+                                trade: Some(TradeAnalysis {
+                                    acceptance_probability: probability,
+                                    acceptance_when_affordable: if affordable > 0.0 {
+                                        probability / affordable
+                                    } else {
+                                        0.0
+                                    },
+                                    accepted_value: Some(accepted_total),
+                                    rejected_value: best_plain,
+                                    partner_affordability: affordable,
+                                    unlocked_actions: unlocked,
+                                }),
+                            },
+                            note: Some(format!(
+                                "{}: threat {:.2}, modeled acceptance {:.2}, partner gain {:.0}",
+                                bargain::name(view, partner),
+                                threats[partner as usize].total,
+                                probability,
+                                gain
+                            )),
+                            speech: None,
+                        });
+                    }
+                    bargain::Kind::Accept { offer } => {
+                        // Only worlds where the partner can pay.
+                        let feasible: Vec<World> = worlds
+                            .iter()
+                            .filter_map(|w| {
+                                apply(&w.state, seat, d.action).ok().map(|state| World {
+                                    state,
+                                    weight: w.weight,
+                                })
+                            })
+                            .collect();
+                        if feasible.is_empty() {
+                            continue;
+                        }
+                        let gain = worlds
+                            .iter()
+                            .map(|w| {
+                                w.weight
+                                    * bargain::partner_gain(
+                                        &w.state, partner, receive, give, card_value, point,
+                                    )
+                            })
+                            .sum::<f64>();
+                        let mut value = if actor(&feasible[0].state) == seat
+                            && feasible[0].state.phase == Phase::Main
+                        {
+                            search.plan(feasible, 1)?.0
+                        } else {
+                            search.round(&normalize(feasible), 0)?
+                        };
+                        value.0.insert("trade_margin", -margin_for(partner));
+                        value
+                            .0
+                            .insert("partner_threat", -threat_cost(partner, gain));
+                        accept_totals.insert(offer.id.clone(), value.total());
+                        rows.push(Row {
+                            command: Some(d.command.clone()),
+                            action: d.action,
+                            root: RootValue { value, trade: None },
+                            note: Some(format!(
+                                "{}: threat {:.2}, partner gain {:.0}",
+                                bargain::name(view, partner),
+                                threats[partner as usize].total,
+                                gain
+                            )),
+                            speech: Some(bargain::accept_text(view, offer)),
+                        });
+                    }
+                    bargain::Kind::Counter { offer, acceptance } => {
+                        let Some(fallback_plain) = fallback_plain else {
+                            continue;
+                        };
+                        let mut accepted = Vec::new();
+                        let mut gain = 0.0;
+                        let mut affordable = 0.0;
+                        for w in &worlds {
+                            if let Ok(after) = apply(&w.state, seat, d.action) {
+                                affordable += w.weight;
+                                gain += w.weight
+                                    * bargain::partner_gain(
+                                        &w.state, partner, give, receive, card_value, point,
+                                    );
+                                accepted.push(World {
+                                    state: after,
+                                    weight: w.weight,
+                                });
+                            }
+                        }
+                        if accepted.is_empty() {
+                            continue;
+                        }
+                        gain /= affordable;
+                        let probability =
+                            (acceptance * partner_factor[partner as usize] * affordable).min(1.0);
+                        let accepted_value = search.round(&normalize(accepted), 0)?;
+                        if search.aborted {
+                            break;
+                        }
+                        let accepted_total = accepted_value.total() - threat_cost(partner, gain);
+                        // If the counter is declined the original offer usually stays open.
+                        let original = accept_totals.get(&offer.id).copied();
+                        let fallback = match original {
+                            Some(accept) => {
+                                fallback_plain + 0.6 * (accept - fallback_plain).max(0.0)
+                            }
+                            None => fallback_plain,
+                        };
+                        let mut value = leaf::Terms::default();
+                        value.0.insert(
+                            "expected",
+                            probability * accepted_total + (1.0 - probability) * fallback,
+                        );
+                        value.0.insert("trade_margin", -margin_for(partner));
+                        let total = value.total();
+                        counter_best
+                            .entry(offer.id.clone())
+                            .and_modify(|b| *b = b.max(total))
+                            .or_insert(total);
+                        rows.push(Row {
+                            command: Some(d.command.clone()),
+                            action: d.action,
+                            root: RootValue {
+                                value,
+                                trade: Some(TradeAnalysis {
+                                    acceptance_probability: probability,
+                                    acceptance_when_affordable: *acceptance,
+                                    accepted_value: Some(accepted_total),
+                                    rejected_value: fallback,
+                                    partner_affordability: affordable,
+                                    unlocked_actions: vec![],
+                                }),
+                            },
+                            note: Some(format!(
+                                "counter to {}: estimated eagerness {:.2}, threat {:.2}",
+                                bargain::name(view, partner),
+                                acceptance,
+                                threats[partner as usize].total
+                            )),
+                            speech: None,
+                        });
+                    }
+                    bargain::Kind::Reject { .. } => {}
+                }
+            }
+        }
+        // One offer to every safe partner at once, when several were worth asking.
+        if !search.aborted
+            && let Some(best_plain) = best_plain
+        {
+            let mut done: Vec<(Resources, Resources)> = Vec::new();
+            for &(give, receive, _, _, _, _, _) in &per_partner {
+                if done.contains(&(give, receive)) {
+                    continue;
+                }
+                done.push((give, receive));
+                let group: Vec<_> = per_partner
+                    .iter()
+                    .filter(|x| x.0 == give && x.1 == receive && threats[x.2 as usize].total < 0.5)
+                    .collect();
+                if group.len() < 2 {
+                    continue;
+                }
+                let miss: f64 = group.iter().map(|x| 1.0 - x.3).product();
+                let probability = 1.0 - miss;
+                let mass: f64 = group.iter().map(|x| x.3).sum();
+                if probability <= 1e-9 || mass <= 1e-9 {
+                    continue;
+                }
+                let accepted_total: f64 = group.iter().map(|x| x.3 * x.4).sum::<f64>() / mass;
+                let cost: f64 = group.iter().map(|x| x.3 * x.5).sum::<f64>() / mass;
+                let to: Vec<u8> = group.iter().map(|x| x.2).collect();
+                let margin_group = group.iter().map(|x| margin_for(x.2)).fold(0.0, f64::max);
+                let mut unlocked: Vec<Action> = Vec::new();
+                for x in &group {
+                    for a in &x.6 {
+                        if !unlocked.contains(a) {
+                            unlocked.push(*a);
                         }
                     }
-                    let probability: f64 = accepted.iter().map(|w| w.weight).sum();
-                    if probability <= 1e-9 {
-                        continue;
-                    }
-                    let accepted_value = search.plan(accepted, 1)?.0;
-                    if search.aborted {
-                        break;
-                    }
-                    let accepted_total = accepted_value.total();
-                    let mut value = leaf::Terms::default();
-                    value.0.insert(
-                        "expected",
-                        best_plain + probability * (accepted_total - best_plain),
-                    );
-                    value.0.insert("trade_margin", -margin);
-                    RootValue {
+                }
+                let mut value = leaf::Terms::default();
+                value.0.insert(
+                    "expected",
+                    best_plain + probability * (accepted_total - best_plain),
+                );
+                value.0.insert("trade_margin", -margin_group);
+                value.0.insert("partner_threat", -probability * cost);
+                let block = blocks(&unlocked, contested)
+                    .then_some(top_threat.map(|t| t.0))
+                    .flatten();
+                let text = bargain::offer_text(view, &to, give, receive, &unlocked, block, false);
+                rows.push(Row {
+                    command: Some(settlers_protocol::Command::OfferTrade {
+                        to: to.clone(),
+                        give,
+                        receive,
+                        message: Some(settlers_protocol::Communication {
+                            intent: settlers_protocol::Intent::RequestTrade,
+                            resources: Some(receive),
+                            text: Some(text),
+                        }),
+                    }),
+                    action: Action::Trade {
+                        other: to[0],
+                        give,
+                        receive,
+                    },
+                    root: RootValue {
                         value,
                         trade: Some(TradeAnalysis {
                             acceptance_probability: probability,
-                            acceptance_when_affordable: if affordable > 0.0 {
-                                probability / affordable
-                            } else {
-                                0.0
-                            },
+                            acceptance_when_affordable: probability,
                             accepted_value: Some(accepted_total),
                             rejected_value: best_plain,
-                            partner_affordability: affordable,
+                            partner_affordability: 1.0,
                             unlocked_actions: unlocked,
                         }),
-                    }
-                } else {
-                    // Accepting an open offer: only worlds where the partner can pay.
-                    let feasible: Vec<World> = worlds
-                        .iter()
-                        .filter_map(|w| {
-                            apply(&w.state, seat, d.action).ok().map(|state| World {
-                                state,
-                                weight: w.weight,
-                            })
-                        })
-                        .collect();
-                    if feasible.is_empty() {
-                        continue;
-                    }
-                    let mut value = if actor(&feasible[0].state) == seat
-                        && feasible[0].state.phase == Phase::Main
-                    {
-                        search.plan(feasible, 1)?.0
-                    } else {
-                        search.round(&normalize(feasible), 0)?
-                    };
-                    value.0.insert("trade_margin", -margin);
-                    RootValue { value, trade: None }
-                };
-                rows.push((Some(d.command.clone()), d.action, value));
+                    },
+                    note: Some(format!(
+                        "open to {}",
+                        to.iter()
+                            .map(|&q| bargain::name(view, q))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
+                    speech: None,
+                });
             }
         }
-        if !search.aborted && actions.is_empty() && rows.iter().all(|r| r.0.is_some()) && !my_turn {
-            // Waiting is the alternative to accepting an off-turn offer.
-            let value = search.round(&worlds, 0)?;
-            rows.push((None, Action::EndTurn, RootValue { value, trade: None }));
+        // Explicit declines: an open offer to this seat that neither accepting nor countering
+        // beats waiting on gets a reasoned refusal instead of silence.
+        if !search.aborted
+            && let Some(wait) = &wait_value
+        {
+            let my_open = view
+                .offers
+                .iter()
+                .any(|offer| offer.from == seat && offer.status == OfferStatus::Open);
+            let mut declined_any = false;
+            for offer in &view.offers {
+                if offer.status != OfferStatus::Open
+                    || !offer.to.contains(&seat)
+                    || offer.from == seat
+                    || offer.declined.contains(&seat)
+                    || my_open
+                {
+                    continue;
+                }
+                let wait_total = wait.total();
+                let accept = accept_totals.get(&offer.id).copied();
+                let counter = counter_best.get(&offer.id).copied();
+                if accept.is_some_and(|v| v > wait_total) || counter.is_some_and(|v| v > wait_total)
+                {
+                    continue;
+                }
+                let reason = decline_reason(
+                    root, seat, &knowledge, &threats, offer, accept, counter, &weights,
+                );
+                let mut value = wait.clone();
+                value.0.insert("decline", 1e-6);
+                rows.push(Row {
+                    command: Some(settlers_protocol::Command::RejectTrade {
+                        offer_id: offer.id.clone(),
+                    }),
+                    action: Action::EndTurn,
+                    root: RootValue { value, trade: None },
+                    note: Some(format!("decline: {reason:?}")),
+                    speech: Some(bargain::decline_text(
+                        view,
+                        offer,
+                        &reason,
+                        o.turn,
+                        o.settings.players,
+                    )),
+                });
+                declined_any = true;
+            }
+            if !declined_any && actions.is_empty() && rows.iter().all(|r| r.command.is_some()) {
+                // Waiting is the alternative to accepting an off-turn offer.
+                rows.push(Row::plain(
+                    None,
+                    Action::EndTurn,
+                    RootValue {
+                        value: wait.clone(),
+                        trade: None,
+                    },
+                ));
+            }
         }
         let stats = std::mem::take(&mut search.stats);
         cumulative.transitions += stats.transitions;
@@ -521,7 +988,7 @@ pub fn analyze_with(
             for a in &actions {
                 let children = search.step(&worlds, seat, *a)?;
                 let value = search.leaf(&normalize(children));
-                rows.push((
+                rows.push(Row::plain(
                     Some(settlers_protocol::Command::Act { action: *a }),
                     *a,
                     RootValue { value, trade: None },
@@ -537,40 +1004,87 @@ pub fn analyze_with(
             .iter()
             .enumerate()
             .filter(|(i, _)| *i < recorded.len())
-            .max_by(|a, b| a.1.2.value.total().total_cmp(&b.1.2.value.total()));
+            .max_by(|a, b| a.1.root.value.total().total_cmp(&b.1.root.value.total()));
         let overall = rows
             .iter()
-            .map(|r| r.2.value.total())
+            .map(|r| r.root.value.total())
             .fold(f64::NEG_INFINITY, f64::max);
         if let Some((i, row)) = best
-            && row.2.value.total() >= overall - 1e-9
+            && row.root.value.total() >= overall - 1e-9
         {
             outcomes = Some(summarize_outcomes(root, seat, &recorded[i], 12));
         }
     }
-    let mut candidates: Vec<Candidate> = rows
+    let candidates: Vec<Candidate> = rows
         .into_iter()
-        .map(|(command, action, root)| Candidate {
+        .map(|row| Candidate {
             id: String::new(),
-            command,
-            expected_value: root.value.total(),
-            minimum_leaf_value: root.value.total(),
-            maximum_leaf_value: root.value.total(),
-            contributions: Contributions(root.value.owned()),
-            trade: root.trade,
-            principal_variation: vec![action],
+            command: row.command,
+            expected_value: row.root.value.total(),
+            minimum_leaf_value: row.root.value.total(),
+            maximum_leaf_value: row.root.value.total(),
+            contributions: Contributions(row.root.value.owned()),
+            trade: row.root.trade,
+            principal_variation: vec![row.action],
+            note: row.note,
+            speech: row.speech,
         })
         .collect();
+    if candidates.is_empty() && !o.legal_actions.is_empty() {
+        return Err(SearchError::Horizon);
+    }
+    let mut stats = stats;
+    stats.transitions = cumulative.transitions;
+    stats.afterstates = cumulative.afterstates;
+    stats.expanded = cumulative.expanded;
+    stats.transpositions = cumulative.transpositions;
+    stats.scenarios = cumulative.scenarios;
+    stats.own_nodes = cumulative.own_nodes;
+    stats.cache_hits = cumulative.cache_hits;
+    stats.cached_transitions = cumulative.cached_transitions;
+    stats.aborted = cumulative.aborted;
+    Ok(finish_report(
+        &config,
+        view,
+        o,
+        seat,
+        leaf,
+        knowledge,
+        candidates,
+        stats,
+        depth_completed,
+        actions.len(),
+        cache,
+        clock(),
+        outcomes,
+    ))
+}
+/// Sort and number the candidates and assemble the report. `stats` carries the cumulative
+/// counters in its transition, afterstate, expansion, transposition, scenario, own-node,
+/// cache, and aborted fields and the last completed depth's per-level vectors.
+#[allow(clippy::too_many_arguments)]
+fn finish_report(
+    config: &SearchConfig,
+    view: &GameView,
+    o: &Observation,
+    seat: u8,
+    leaf: &Leaf,
+    knowledge: ResourceKnowledge,
+    mut candidates: Vec<Candidate>,
+    stats: search::Stats,
+    depth_completed: u8,
+    root_actions: usize,
+    cache: &Cache,
+    time_ms: f64,
+    outcomes: Option<Vec<OutcomeLevel>>,
+) -> Report {
     candidates.sort_by(|a, b| b.expected_value.total_cmp(&a.expected_value));
     for (i, c) in candidates.iter_mut().enumerate() {
         c.id = format!("decision_{i}");
     }
-    if candidates.is_empty() && !o.legal_actions.is_empty() {
-        return Err(SearchError::Horizon);
-    }
     let top_ids = candidates.iter().take(3).map(|c| c.id.clone()).collect();
     let players = u32::from(o.settings.players);
-    Ok(Report {
+    Report {
         policy: if leaf.is_hand() {
             "expectimax-v2".into()
         } else {
@@ -584,7 +1098,7 @@ pub fn analyze_with(
             samples: config.samples.min(16),
             node_budget: config.node_budget.min(4096) as u32,
         },
-        search: Some(config),
+        search: Some(config.clone()),
         horizon_turn: o.turn + players * u32::from(depth_completed.max(1) - 1),
         observation: o.clone(),
         offers: view.offers.clone(),
@@ -600,21 +1114,21 @@ pub fn analyze_with(
             minimum_leaf_turn: None,
             maximum_leaf_turn: 0,
             terminal_leaves: 0,
-            transitions: cumulative.transitions,
-            afterstates: cumulative.afterstates,
-            expanded: cumulative.expanded,
-            transpositions: cumulative.transpositions,
-            scenarios: cumulative.scenarios,
-            own_nodes: cumulative.own_nodes,
+            transitions: stats.transitions,
+            afterstates: stats.afterstates,
+            expanded: stats.expanded,
+            transpositions: stats.transpositions,
+            scenarios: stats.scenarios,
+            own_nodes: stats.own_nodes,
             depth_completed: u32::from(depth_completed),
-            time_ms: clock(),
-            aborted: cumulative.aborted,
+            time_ms,
+            aborted: stats.aborted,
             per_level_afterstates: stats.per_level_afterstates,
             per_level_nodes: stats.per_level_nodes,
-            root_actions: actions.len() as u32,
+            root_actions: root_actions as u32,
             legal_actions: o.legal_actions.len() as u32,
-            cache_hits: cumulative.cache_hits,
-            cached_transitions: cumulative.cached_transitions,
+            cache_hits: stats.cache_hits,
+            cached_transitions: stats.cached_transitions,
             cache_entries: cache.entries() as u64,
         },
         assumptions: vec![
@@ -622,9 +1136,85 @@ pub fn analyze_with(
             "Opponents follow a fixed builder policy on their sampled hands under common random dice scenarios shared by every candidate. This is not an equilibrium model.".into(),
             "Hidden hands are sampled from bounded public knowledge; the root decision is shared by all sampled worlds, deeper decisions may differ between worlds.".into(),
             "Trade acceptance is the reference willingness model scaled by the trade inclination; proposals and acceptances must beat the plain alternative by the trade margin.".into(),
+            "Setup placements are ranked by the opening planner: portfolios of the two sites under discrete strategies, with the intervening draft picks predicted. Values are in pips, not leaf points.".into(),
             "Contributions are additive weighted heuristic terms, not win probabilities.".into(),
         ],
+    }
+}
+/// One partner's evaluated proposal: give, receive, partner, acceptance, accepted value,
+/// threat cost, and the builds it unlocks.
+type PartnerOffer = (Resources, Resources, u8, f64, f64, f64, Vec<Action>);
+/// Whether one of the unlocked builds takes or touches the contested site.
+fn blocks(unlocked: &[Action], contested: Option<u8>) -> bool {
+    let Some(v) = contested else {
+        return false;
+    };
+    unlocked.iter().any(|a| match a {
+        Action::BuildSettlement { vertex } => *vertex == v,
+        Action::BuildRoad { edge } => topology().edges[*edge as usize].contains(&v),
+        _ => false,
     })
+}
+/// Why this seat declines `offer`, from the most to the least specific ground.
+#[allow(clippy::too_many_arguments)]
+fn decline_reason(
+    s: &State,
+    seat: u8,
+    k: &ResourceKnowledge,
+    threats: &[bargain::Threat; 4],
+    offer: &settlers_protocol::TradeOffer,
+    accept: Option<f64>,
+    counter: Option<f64>,
+    w: &Weights,
+) -> bargain::Reason {
+    let threat = threats[offer.from as usize];
+    if threat.race >= 0.6 {
+        return bargain::Reason::Leader {
+            points: public_points(s, offer.from),
+        };
+    }
+    if threat.total >= 0.3
+        && let Some(build) = bargain::public_unlock(k, offer.from, offer.receive, offer.give)
+    {
+        return bargain::Reason::Unlock { build };
+    }
+    if threat.space >= 0.5 {
+        return bargain::Reason::Space;
+    }
+    if let (Some(a), Some(c)) = (accept, counter)
+        && c > a
+    {
+        return bargain::Reason::Thin;
+    }
+    // Keeping the asked cards for the seat's own next build.
+    let own = s.players[seat as usize].resources;
+    let rates = leaf::rates(s, seat);
+    let _ = w;
+    let asked = Resource::ALL
+        .into_iter()
+        .filter(|&r| offer.receive.0[r as usize] > 0)
+        .max_by_key(|&r| offer.receive.0[r as usize]);
+    if let Some(r) = asked {
+        for (cost, build) in [
+            (Resources::CITY, "a city"),
+            (Resources::SETTLEMENT, "a settlement"),
+            (Resources::ROAD, "a road"),
+            (Resources::DEVELOPMENT, "a development card"),
+        ] {
+            let after = own.0[r as usize].saturating_sub(offer.receive.0[r as usize]);
+            if cost.0[r as usize] > 0
+                && own.0[r as usize] >= cost.0[r as usize]
+                && after < cost.0[r as usize]
+                && rates[r as usize] < 0.12
+            {
+                return bargain::Reason::Need {
+                    resource: r,
+                    build: Some(build),
+                };
+            }
+        }
+    }
+    bargain::Reason::Plain
 }
 /// Per-partner multipliers on modeled willingness from this seat's own offer record:
 /// `2 * (accepted + 1) / (closed + 2)`, so a partner with no history is unchanged and one
@@ -841,7 +1431,7 @@ fn settled_decision(rows: &[Row], gap: f64) -> bool {
     if gap <= 0.0 {
         return false;
     }
-    let mut values: Vec<f64> = rows.iter().map(|r| r.2.value.total()).collect();
+    let mut values: Vec<f64> = rows.iter().map(|r| r.root.value.total()).collect();
     values.sort_by(|a, b| b.total_cmp(a));
     values[0] - values[1] >= gap
 }

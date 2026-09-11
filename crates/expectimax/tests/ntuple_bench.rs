@@ -5,10 +5,12 @@ use settlers_expectimax::ntuple::{Layout, MAX_ACTIVE, Model};
 use settlers_expectimax::v2::{Weights, leaf::evaluate, opponent};
 use std::hash::{Hash, Hasher};
 
-/// A few hundred mid-game positions from builder play on several seeds.
+/// A few hundred mid-game positions from builder play on several seeds. The builder opens
+/// with the opening planner, so a change to the planner changes these positions and the
+/// digest below; a pure change to feature extraction must leave the digest unchanged.
 fn positions() -> Vec<State> {
     let mut out = Vec::new();
-    for seed in 0..6u8 {
+    for seed in 0..10u8 {
         let mut s = State::new(Settings::default(), [seed; 32]).unwrap();
         let mut steps = 0;
         while !matches!(s.phase, Phase::Finished { .. }) && steps < 1500 {
@@ -46,7 +48,7 @@ fn feature_extraction_is_stable() {
     }
     let digest = h.finish();
     eprintln!("feature digest {digest:#x} over {} positions", states.len());
-    assert_eq!(digest, 0x2eb4_7a24_64ef_e061, "feature digest changed");
+    assert_eq!(digest, 0x45dc_9381_441c_d238, "feature digest changed");
 }
 
 #[test]

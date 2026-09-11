@@ -97,6 +97,12 @@ pub struct Candidate {
     pub contributions: Contributions,
     pub trade: Option<TradeAnalysis>,
     pub principal_variation: Vec<Action>,
+    /// A short public explanation of the candidate (opening plans, trade reasoning).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// Table talk the policy proposes to send if this candidate is played.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speech: Option<String>,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -359,6 +365,8 @@ pub fn analyze(
             maximum_leaf_value: value.max,
             contributions: Contributions::from(value.features),
             trade,
+            note: None,
+            speech: None,
             principal_variation: line.into_iter().take(10).collect(),
         });
     }
@@ -372,6 +380,8 @@ pub fn analyze(
             maximum_leaf_value: wait.max,
             contributions: Contributions::from(wait.features),
             trade: None,
+            note: None,
+            speech: None,
             principal_variation: wait.line,
         });
     }

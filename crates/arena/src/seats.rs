@@ -62,6 +62,13 @@ fn summarize(report: &settlers_expectimax::Report) -> serde_json::Value {
             "command": c.command.as_ref().map(|c| serde_json::to_value(c).unwrap_or_default()),
             "value": c.expected_value,
             "contributions": c.contributions,
+            "note": c.note,
+            "speech": c.speech,
+            "trade": c.trade.as_ref().map(|t| serde_json::json!({
+                "acceptance": t.acceptance_probability,
+                "accepted_value": t.accepted_value,
+                "rejected_value": t.rejected_value,
+            })),
         })).collect::<Vec<_>>(),
         "outcomes": report.outcomes,
     })

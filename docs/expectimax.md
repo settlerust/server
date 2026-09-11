@@ -260,6 +260,113 @@ expanded continuations. The reported `statistics` include transitions, leaves,
 afterstates per level, expansions, transpositions, scenarios, the depth completed,
 and elapsed milliseconds.
 
+### Opening placement
+
+The two setup settlements and their roads are placed by the opening planner in
+`v2/opening.rs`, not by the lookahead. The search's own ranking of setup sites
+values raw production over the rolls that remain and adds the noise of the
+first few rolls; a paired engine-arena cohort of 256 games (64 deterministic
+boards, four rotations) put the planner-decided seat at 47% wins against 38% for
+the same search re-ranking the planner's shortlist, and the earlier pip-only
+planner drafts lost by 30 points, so the currency matters more than the search.
+
+The planner scores a pair of sites as a portfolio, in pips (one pip is one
+thirty-sixth of a card per roll):
+
+| Term | Rule |
+| --- | --- |
+| `production` | Pips per resource × the strategy's resource weights × a scarcity markup for resources thin on the island |
+| `coverage` | Pips of the distinct dice numbers the pair covers, so two settlements on the same 6 count once |
+| `balance` | A penalty for every resource the pair leaves below three pips, weighted by how much the strategy needs it |
+| `tempo` | How soon the pair can afford a settlement with a road, and a city, letting surplus convert at bank and port ratios |
+| `ports` | Matched 2:1 production and a small flat value for a 3:1 port |
+| `expansion` | The best open site two or three roads away and how many open sites sit two roads away |
+| `style` | The seat's `expansion` and `development` inclinations leaning toward the roads, cities, and cards strategies |
+| `draft` | Value lost to the picks predicted before the seat's next placement (never positive) |
+
+Five discrete strategies (`coverage`, `cities`, `roads`, `ports`, `cards`)
+differ in resource weights, needs, and term weights. `coverage` is calibrated to
+the leaf's resource values; the others are blended in by `opening_weights.specialize`
+(zero values every pair by coverage alone, one takes the best specialized
+strategy in full). The default is zero: in a 256-game sweep against builders the
+fully specialized planner lost by 16 points and a half blend cancelled the
+planner's gain, while the scarcity markup at full strength kept it (+12 points),
+so specialization stays a research knob rather than a default. The seat order decides what is planned: a first placement is
+valued by the best pair it still leaves after the seats ahead in the snake draft
+have picked, predicted with the same scoring (a greedy draft plus a few sampled
+drafts where opponents pick among their top sites); a second placement completes
+the pair; the last seat in the order plans both placements together because
+nobody picks in between. Roads head for the best open site within two more roads
+after the remaining setup picks are predicted, with a little extra for reaching
+the seat's other settlement or a 3:1 port.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `opening` | `planner` | `planner` decides setup directly; `search` keeps the planner's shortlist but lets the lookahead rank it |
+| `bargain` | `true` | Threat-aware pricing, counters, and reasoned declines; `false` keeps plain acceptance and proposals as the control |
+| `opening_weights.production` | 1.0 | Multiplier on the production term |
+| `opening_weights.coverage` | 0.15 | Multiplier on distinct-number coverage |
+| `opening_weights.balance` | 0.2 | Multiplier on the thin-resource penalty |
+| `opening_weights.tempo` | 1.0 | Multiplier on the build-time term |
+| `opening_weights.ports` | 1.0 | Multiplier on the port term |
+| `opening_weights.expansion` | 0.15 | Multiplier on the expansion term |
+| `opening_weights.specialize` | 0 | Share of a specialized strategy's advantage that counts |
+| `opening_weights.scarcity` | 1 | Strength of the scarce-resource markup |
+| `opening_weights.samples` | 6 | Simulated drafts averaged for a first placement |
+
+Setup candidates in a report carry the planner's terms as contributions, a
+`note` such as "cities portfolio: site 38 gives 13 ore pips; expects to pair it
+with site 21 (83% of predicted drafts)", and a principal variation that lists the
+planned second site. The same planner places the opponents' setup inside the
+lookahead, the fast and ETA builders (through `settlers_policies`), and the
+browser builders (through the `opening_placement` WASM export), so every seat
+opens the same way and the draft prediction is exact against greedy opponents.
+
+### Bargaining
+
+`v2/bargain.rs` replaces the reference trade enumerator for the tunable search.
+Every other seat gets a threat in `[0, 1]` from public information: `race`
+(ahead in points or near the finish), `space` (how much of this seat's best
+reachable ground that seat can reach as fast), and `awards` (a live contest for
+the longest road or the largest army). The threat sets a per-partner premium on
+the trade margin (30 points at full threat) and a cost on every swap equal to a
+share of what the partner gains from it (net cards, a build the swap completes
+for them, progress toward one), scaled by the seat's `aggression` inclination.
+Seats with a threat at or above 0.75 are never approached with offers, and the
+most threatening seat's best reachable site is the `contested` site: an offer
+whose unlocked build takes or touches it is worded as a block.
+
+Proposals are one- and two-for-one swaps toward any build cost that give only
+cards beyond the largest cost that still needs the wanted resource, plus
+two-for-one asks when the partner is known to hold at least two of the wanted
+resource. Each partner is valued separately (modeled acceptance × the accepted
+continuation), and when two or more safe partners were worth asking, one open
+offer to all of them is added with the combined acceptance. Every offer carries
+a message naming the partner, the terms, and the reason (the build it completes,
+a block, or spare cards).
+
+An open offer addressed to this seat gets three kinds of answers. Accepting is
+valued as before, less the partner's threat cost. As the non-current seat, and
+once per foreign offer, counters ask for more of what was offered, an extra card
+of something this seat is short of, a different resource in the same count, or
+give one card less when two were asked; each is priced by the offerer's public
+eagerness (a build the swap completes under their minimum known hand, a large
+hand, an explicit request) and by the chance the original offer stays open if
+the counter is declined. When neither accepting nor countering beats waiting, the
+seat declines explicitly with a reason, from the most specific ground: the
+offerer leads the race, the swap completes a build for a threatening seat, the
+offerer competes for the same ground, the terms are thin (a counter was closer),
+this seat needs the asked cards for its own next build, or a plain pass. Early
+in the game a pass is short; later the reason is spelled out. Candidates carry
+this table talk as `speech` (declines and acceptances) or inside the offer's
+`message`, and a `note` with the threat, modeled acceptance, and partner gain.
+
+The engine arena resolves counters: a recipient that answers an offer with its
+own offer to the current player publishes it, the current seat is asked, and an
+accepted counter closes the original as `resources_changed`. Explicit declines
+are recorded as `trade_rejected` events. Seat records count `counters`,
+`counters_accepted`, and `declined`.
+
 ### Learned n-tuple leaf
 
 `leaf` selects the evaluator. By default the hand-written terms above apply.

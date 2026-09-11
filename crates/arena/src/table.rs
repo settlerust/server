@@ -46,6 +46,15 @@ pub struct SeatRecord {
     pub offers: u32,
     pub offers_accepted: u32,
     pub accepted_others: u32,
+    /// Counter-offers this seat made in reply to another seat's offer, and how many the
+    /// offerer took.
+    #[serde(default)]
+    pub counters: u32,
+    #[serde(default)]
+    pub counters_accepted: u32,
+    /// Offers this seat declined explicitly.
+    #[serde(default)]
+    pub declined: u32,
     pub settlements_built: u32,
     pub cities_built: u32,
     pub roads_built: u32,
@@ -373,6 +382,7 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                     &view,
                 );
                 let mut winner = None;
+                let mut countered = false;
                 let mut order: Vec<u8> = (1..n as u8).map(|k| (p + k) % n as u8).collect();
                 order.retain(|r| offer.to.contains(r));
                 for r in order {
@@ -384,28 +394,135 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                     records[ri].decisions += 1;
                     records[ri].decision_ms += ms;
                     records[ri].max_decision_ms = records[ri].max_decision_ms.max(ms);
-                    if let Some(Command::AcceptTrade { offer_id }) = &answer
-                        && *offer_id == offer.id
-                    {
-                        let trade = Action::Trade {
-                            other: r,
-                            give,
-                            receive,
-                        };
-                        if let Ok((next, events)) = apply_recorded(&t.state, p, trade) {
-                            t.commit(&mut seats, next, events, &mut counts, &mut records);
-                            seats[ri].committed(
-                                &Command::AcceptTrade {
-                                    offer_id: offer.id.clone(),
-                                },
-                                &rview,
-                            );
-                            records[ri].accepted_others += 1;
-                            records[pi].offers_accepted += 1;
-                            winner = Some(r);
-                            break;
+                    match &answer {
+                        Some(Command::AcceptTrade { offer_id }) if *offer_id == offer.id => {
+                            let trade = Action::Trade {
+                                other: r,
+                                give,
+                                receive,
+                            };
+                            if let Ok((next, events)) = apply_recorded(&t.state, p, trade) {
+                                t.commit(&mut seats, next, events, &mut counts, &mut records);
+                                seats[ri].committed(
+                                    &Command::AcceptTrade {
+                                        offer_id: offer.id.clone(),
+                                    },
+                                    &rview,
+                                );
+                                records[ri].accepted_others += 1;
+                                records[pi].offers_accepted += 1;
+                                winner = Some(r);
+                                break;
+                            }
                         }
+                        Some(Command::RejectTrade { offer_id }) if *offer_id == offer.id => {
+                            records[ri].declined += 1;
+                            t.publish(
+                                &mut seats,
+                                vec![PublicEvent::TradeRejected {
+                                    offer_id: offer.id.clone(),
+                                    player: r,
+                                }],
+                            );
+                        }
+                        Some(Command::OfferTrade {
+                            to: counter_to,
+                            give: counter_give,
+                            receive: counter_receive,
+                            message: counter_message,
+                        }) if *counter_to == vec![p] => {
+                            // A counter: the recipient proposes other terms to the offerer.
+                            let funded = t.state.players[ri].resources.contains(*counter_give);
+                            if !funded
+                                || counter_give.total() == 0
+                                || counter_receive.total() == 0
+                                || !counter_give.disjoint(*counter_receive)
+                            {
+                                records[ri].invalid += 1;
+                                continue;
+                            }
+                            records[ri].offers += 1;
+                            records[ri].counters += 1;
+                            let counter = TradeOffer {
+                                id: format!("offer-{}-c{}", t.version + 1, r),
+                                from: r,
+                                to: vec![p],
+                                give: *counter_give,
+                                receive: *counter_receive,
+                                message: counter_message.clone(),
+                                status: OfferStatus::Open,
+                                declined: vec![],
+                            };
+                            t.publish(
+                                &mut seats,
+                                vec![PublicEvent::TradeOffered {
+                                    offer: counter.clone(),
+                                }],
+                            );
+                            seats[ri].committed(answer.as_ref().unwrap(), &rview);
+                            let both = [offer.clone(), counter.clone()];
+                            let pview = t.view(p, &both);
+                            let clock = Instant::now();
+                            let reply = seats[pi].choose(&pview, &t.histories[pi]);
+                            let ms = clock.elapsed().as_secs_f64() * 1000.0;
+                            records[pi].decisions += 1;
+                            records[pi].decision_ms += ms;
+                            records[pi].max_decision_ms = records[pi].max_decision_ms.max(ms);
+                            let mut taken = false;
+                            if let Some(Command::AcceptTrade { offer_id }) = &reply
+                                && *offer_id == counter.id
+                            {
+                                let trade = Action::Trade {
+                                    other: r,
+                                    give: *counter_receive,
+                                    receive: *counter_give,
+                                };
+                                if let Ok((next, events)) = apply_recorded(&t.state, p, trade) {
+                                    t.commit(&mut seats, next, events, &mut counts, &mut records);
+                                    seats[pi].committed(
+                                        &Command::AcceptTrade {
+                                            offer_id: counter.id.clone(),
+                                        },
+                                        &pview,
+                                    );
+                                    records[ri].counters_accepted += 1;
+                                    records[ri].offers_accepted += 1;
+                                    records[pi].accepted_others += 1;
+                                    taken = true;
+                                }
+                            }
+                            t.publish(
+                                &mut seats,
+                                vec![PublicEvent::TradeClosed {
+                                    offer_id: counter.id,
+                                    reason: if taken {
+                                        TradeCloseReason::Accepted
+                                    } else {
+                                        TradeCloseReason::Declined
+                                    },
+                                    winner: taken.then_some(p),
+                                }],
+                            );
+                            if taken {
+                                t.publish(
+                                    &mut seats,
+                                    vec![PublicEvent::TradeClosed {
+                                        offer_id: offer.id.clone(),
+                                        reason: TradeCloseReason::ResourcesChanged,
+                                        winner: None,
+                                    }],
+                                );
+                                countered = true;
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
+                }
+                if countered {
+                    actions += 1;
+                    turn_actions += 1;
+                    continue;
                 }
                 t.publish(
                     &mut seats,

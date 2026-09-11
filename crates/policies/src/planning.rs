@@ -152,6 +152,15 @@ pub(crate) fn choose(o: &Observation, analytical: bool) -> Option<Action> {
     if legal.is_empty() {
         return None;
     }
+    if matches!(
+        o.phase,
+        Phase::SetupSettlement { .. } | Phase::SetupRoad { .. }
+    ) && let Some(state) = settlers_expectimax::v2::opening::from_observation(o)
+        && let Some(action) = settlers_expectimax::v2::opening::place(&state, seat)
+        && legal.contains(&action)
+    {
+        return Some(action);
+    }
     if matches!(o.phase, Phase::SetupSettlement { .. }) {
         return legal.iter().copied().max_by(|a, b| {
             let score = |a: Action| {

@@ -199,6 +199,9 @@ pub fn robber(s: &State, p: u8) -> Action {
     )
 }
 fn best_setup_settlement(s: &State, p: u8) -> Action {
+    if let Some(action) = super::opening::place(s, p) {
+        return action;
+    }
     let vertex = (0..54u8)
         .filter(|&v| settlement_allowed(s, p, v, true))
         .max_by(|&a, &b| vertex_score(s, p, a).total_cmp(&vertex_score(s, p, b)))
@@ -222,6 +225,9 @@ pub fn act(s: &State, p: u8, steps: u32) -> Action {
     match s.phase {
         Phase::SetupSettlement { .. } => return best_setup_settlement(s, p),
         Phase::SetupRoad { vertex, .. } => {
+            if let Some(action) = super::opening::place(s, p) {
+                return action;
+            }
             if let Some((_, Some(edge), _)) = expansion(s, p)
                 && topology().edges[edge as usize].contains(&vertex)
                 && s.board.road(edge).is_none()

@@ -91,6 +91,9 @@ pub struct Limits {
     pub node_budget: u64,
     /// Opponents choose the action that maximizes their own static leaf instead of the builder's.
     pub leaf_opponents: bool,
+    /// Setup candidates come from the opening planner's shortlist unless the search's own
+    /// static-leaf shortlist is requested for ablation.
+    pub opening: super::OpeningMode,
 }
 pub struct Search<'a> {
     pub seat: u8,
@@ -550,6 +553,20 @@ impl<'a> Search<'a> {
         let mut out = Vec::new();
         match s.phase {
             Phase::SetupSettlement { .. } => {
+                if self.limits.opening != super::OpeningMode::Search {
+                    return super::opening::rank_settlements(
+                        s,
+                        p,
+                        1,
+                        &super::opening::Bias::default(),
+                    )
+                    .into_iter()
+                    .take(6)
+                    .map(|plan| Action::BuildSettlement {
+                        vertex: plan.vertex,
+                    })
+                    .collect();
+                }
                 let mut scored: Vec<(f64, u8)> = (0..54u8)
                     .filter(|&v| settlement_allowed(s, p, v, true))
                     .map(|v| {
@@ -566,6 +583,13 @@ impl<'a> Search<'a> {
                     .collect();
             }
             Phase::SetupRoad { vertex, .. } => {
+                if self.limits.opening != super::OpeningMode::Search {
+                    return super::opening::rank_roads(s, p, vertex)
+                        .into_iter()
+                        .take(3)
+                        .map(|(edge, _, _)| Action::BuildRoad { edge })
+                        .collect();
+                }
                 return topology().incident_edges[vertex as usize]
                     .iter()
                     .filter(|&&e| s.board.road(e).is_none())
