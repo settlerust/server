@@ -379,6 +379,23 @@ counter that asks it for more cards than it receives, a stand-in for a stubborn
 partner; it changes only what the seat accepts, never what it proposes, and it
 does not depend on `bargain`.
 
+The arms were measured on 2026-09-11 in the engine arena at depth 2 with an
+ETA and a fast builder, the changed seat in slot 0 and the default in slot 1
+(the research notebook's `reports/bargaining-arms.mdx` has the run IDs). That
+design carries a seating bias: two identical defaults in slots 0 and 1 differ
+by +0.176 wins per game (interval +0.083 to +0.268) on boards 0 to 63, because
+slot 1 always sits one seat after slot 0 and is asked first on its offers while
+slot 0 is asked last on slot 1's. Against that null, `threat_pricing: false`
+changes nothing (−0.008), `counters: false` costs −0.199, `asks: false` costs
+−0.156, `bargain: false` costs −0.297, and the seat with `accept_asks: false`
+is +0.059 better than an identical default would be, so refusing asks costs
+the refuser nothing. A swapped pair on boards 64 to 127 confirmed counters at
+−0.096 (interval −0.156 to −0.035) for the seat without them. The default
+keeps every switch on. Any two-search cohort in this arena needs a null arm or
+a swapped pair, and the recipient order of a multi-seat offer in
+`crates/arena/src/table.rs`, which always starts after the offerer, should
+rotate.
+
 ### Learned n-tuple leaf
 
 `leaf` selects the evaluator. By default the hand-written terms above apply.
