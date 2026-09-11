@@ -267,8 +267,8 @@ The two setup settlements and their roads are placed by the opening planner in
 values raw production over the rolls that remain and adds the noise of the
 first few rolls; a paired engine-arena cohort of 256 games (64 deterministic
 boards, four rotations) put the planner-decided seat at 47% wins against 38% for
-the same search re-ranking the planner's shortlist, and the earlier pip-only
-planner drafts lost by 30 points, so the currency matters more than the search.
+the previous search-ranked placement, and the earlier pip-only planner drafts
+lost by 30 points to it, so the currency matters more than the search.
 
 The planner scores a pair of sites as a portfolio, in pips (one pip is one
 thirty-sixth of a card per roll):
@@ -302,7 +302,7 @@ the seat's other settlement or a 3:1 port.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `opening` | `planner` | `planner` decides setup directly; `search` keeps the planner's shortlist but lets the lookahead rank it |
+| `opening` | `planner` | `planner` decides setup directly; `search` is the previous behaviour: the search's own static-leaf shortlist of six sites ranked by the lookahead |
 | `bargain` | `true` | Threat-aware pricing, counters, and reasoned declines; `false` keeps plain acceptance and proposals as the control |
 | `opening_weights.production` | 1.0 | Multiplier on the production term |
 | `opening_weights.coverage` | 0.15 | Multiplier on distinct-number coverage |
