@@ -200,6 +200,15 @@ pub struct SearchConfig {
     pub knight_play_value: bool,
     pub buy_tempo: bool,
     pub hold_knight: bool,
+    /// When the hand exceeds the discard limit, also consider bank trades and roads chosen
+    /// only to shed cards before another seat's roll. `false` (the default) considers only
+    /// builds, useful roads, and trades that reduce a build deficit; the leaf's `hand_risk`
+    /// term prices holding either way.
+    pub spend_down: bool,
+    /// Score discard choices by the build deficits of the kept hand plus the expected
+    /// production before the next own turn, instead of the kept hand alone. `false` (the
+    /// default) ranks discards by the current hand's deficits.
+    pub discard_projection: bool,
 }
 /// Build prediction switches. Each is off by default, reproducing the search exactly.
 /// `opponents` makes the lookahead's opponent model execute each opponent's predicted next
@@ -282,6 +291,8 @@ impl Default for SearchConfig {
             knight_play_value: false,
             buy_tempo: false,
             hold_knight: false,
+            spend_down: false,
+            discard_projection: false,
         }
     }
 }
@@ -330,6 +341,8 @@ impl SearchConfig {
             knight_play_value: self.knight_play_value,
             buy_tempo: self.buy_tempo,
             hold_knight: self.hold_knight,
+            spend_down: self.spend_down,
+            discard_projection: self.discard_projection,
         }
     }
 }
@@ -513,7 +526,7 @@ pub fn analyze_with(
             &mut probe_cache,
         );
         actions = if matches!(root.phase, Phase::Discard { .. }) {
-            Search::discard_candidates(root, seat, 4)
+            Search::discard_candidates(root, seat, 4, config.discard_projection)
         } else {
             probe.candidates(root, seat, 0)
         };
@@ -1414,7 +1427,7 @@ pub fn rank_state_with(
         cache,
     );
     let mut actions = if matches!(state.phase, Phase::Discard { .. }) {
-        Search::discard_candidates(state, seat, 4)
+        Search::discard_candidates(state, seat, 4, config.discard_projection)
     } else {
         search.candidates(state, seat, 0)
     };

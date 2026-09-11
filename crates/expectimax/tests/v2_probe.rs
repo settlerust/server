@@ -39,6 +39,8 @@ fn turn_planning_explores_sequences_when_several_actions_are_available() {
                     knight_play_value: false,
                     buy_tempo: false,
                     hold_knight: false,
+                    spend_down: false,
+                    discard_projection: false,
                 },
                 &never,
                 settlers_expectimax::v2::Leaf::Hand,

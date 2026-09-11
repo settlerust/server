@@ -179,13 +179,18 @@ small tree: every candidate first action is kept (builds, development plays,
 purchases, roads that shorten the path to a reachable site or extend a
 contested longest road, bank exchanges that reduce a build deficit, and ending
 the turn), later steps keep `EndTurn` plus the three, two, then one best
-actions by static value, and long turns only end. Purchases, thefts, and the
-player's own roll branch exactly over their outcomes; positions reached by
-different action orders share one transposition entry. Discards enumerate every
-legal multiset and keep the four that best preserve the current build target.
-The value of a first action is the maximum over its continuations of the
-expectation over chance, so a candidate is credited with the best line it
-enables, never an average over lines.
+actions by static value, and long turns only end. With `spend_down`, a hand
+over the discard limit also lists up to three bank exchanges and two roads
+chosen only to shed cards, so the `hand_risk` term can price spending down
+against holding. Purchases, thefts, and the player's own roll branch exactly
+over their outcomes; positions reached by different action orders share one
+transposition entry. Discards enumerate every legal multiset and keep the four
+that best preserve the current build target; with `discard_projection` the kept
+hand is first credited with the expected production of the rolls before the
+next own turn, so a discard is valued by the target it preserves after that
+production. The value of a first action is the maximum over its continuations
+of the expectation over chance, so a candidate is credited with the best line
+it enables, never an average over lines.
 
 Lookahead is spent on the afterstates of the chosen line. Between levels, every
 other seat plays a fixed builder policy on its sampled hand under common random
@@ -223,6 +228,8 @@ reproducible bit for bit.
 | `deepen_gap` | 0 | Stop deepening once the best candidate leads by this many leaf units; 0 disables |
 | `explain` | false | Report the expected end-of-turn outcomes of the chosen action with probabilities |
 | `cache` | `none` | Transposition tables: `none` per depth pass, `decision` across the passes of one decision, `turn` across the decisions of a turn |
+| `spend_down` | false | Over the discard limit, also consider bank trades and roads chosen only to shed cards |
+| `discard_projection` | false | Rank discards by the kept hand plus expected production before the next own turn |
 | `weights` | see below | Leaf weights |
 | `inclinations` | all 0.5 | Sliders in `[0, 1]` that scale groups of weights |
 | `endgame` | all off | Endgame switches: race leaf, hidden victory points, late leader bias |

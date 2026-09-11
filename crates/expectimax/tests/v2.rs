@@ -147,6 +147,123 @@ fn discard_choices_cover_more_than_the_automatic_suggestion() {
 }
 
 #[test]
+fn spend_down_adds_shedding_trades_only_over_the_limit() {
+    let (mut state, history) = common::fixture(4);
+    let ratio = trade_ratio(&state, 0, Resource::Brick);
+    assert_eq!(ratio, 4, "fixture seat 0 holds no brick port");
+    state.players[0].resources = Resources([4, 0, 4, 4, 0]);
+    state.bank = Resources(std::array::from_fn(|r| {
+        19 - state.players.iter().map(|p| p.resources.0[r]).sum::<u8>()
+    }));
+    state.phase = Phase::Main;
+    state.current = 0;
+    let trades = |config: &SearchConfig| {
+        let view = common::view(&state, 0, history.len() as u64);
+        let report = analyze(&view, &history, config, None, &|| 0.0).unwrap();
+        report
+            .candidates
+            .iter()
+            .filter_map(|c| match &c.command {
+                Some(Command::Act {
+                    action: Action::BankTrade { give, receive },
+                }) => Some((*give, *receive)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let plain = trades(&quick());
+    let switched = trades(&SearchConfig {
+        spend_down: true,
+        ..quick()
+    });
+    // Every switched-only trade sheds cards without reducing a build deficit.
+    let added: Vec<_> = switched.iter().filter(|t| !plain.contains(t)).collect();
+    assert!(!added.is_empty(), "spend_down added no trades");
+    for (give, receive) in added {
+        assert!(give.total() > receive.total(), "not a shedding trade");
+    }
+    // Giving four brick for one grain reduces no build deficit, so the control never lists it.
+    let shedding = (
+        Resources::one(Resource::Brick, 4),
+        Resources::one(Resource::Grain, 1),
+    );
+    assert!(!plain.contains(&shedding));
+    assert!(switched.contains(&shedding));
+    // Under the limit the switch adds nothing.
+    state.players[0].resources = Resources([2, 0, 2, 2, 0]);
+    state.bank = Resources(std::array::from_fn(|r| {
+        19 - state.players.iter().map(|p| p.resources.0[r]).sum::<u8>()
+    }));
+    let view = common::view(&state, 0, history.len() as u64);
+    let plain = analyze(&view, &history, &quick(), None, &|| 0.0).unwrap();
+    let switched = analyze(
+        &view,
+        &history,
+        &SearchConfig {
+            spend_down: true,
+            ..quick()
+        },
+        None,
+        &|| 0.0,
+    )
+    .unwrap();
+    assert_eq!(
+        plain
+            .candidates
+            .iter()
+            .map(|c| c.expected_value.to_bits())
+            .collect::<Vec<_>>(),
+        switched
+            .candidates
+            .iter()
+            .map(|c| c.expected_value.to_bits())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn discard_projection_values_the_kept_hand_after_expected_production() {
+    use settlers_expectimax::v2::search::Search;
+    let (mut state, _) = common::fixture(4);
+    state.players[0].resources = Resources([2, 2, 2, 2, 8]);
+    state.phase = Phase::Discard { pending: 1 };
+    if state.layout.resource(state.robber) == Some(Resource::Ore) {
+        state.robber = state.layout.desert();
+    }
+    // Give seat 0 cities on the best ore hexes, worth more than one ore per round.
+    let mut ore: Vec<(u8, u8)> = (0..19u8)
+        .filter(|&h| state.layout.resource(h) == Some(Resource::Ore))
+        .map(|h| (6 - state.layout.number(h).abs_diff(7), h))
+        .collect();
+    ore.sort_by(|a, b| b.cmp(a));
+    let mut buildings: Vec<u8> = (0..54).map(|v| state.board.building(v)).collect();
+    let mut cities = 0;
+    let mut rate = 0.0;
+    for (pips, h) in ore {
+        if rate > 1.0 {
+            break;
+        }
+        let v = topology().hex_vertices[h as usize][0];
+        buildings[v as usize] = 5; // a city of seat 0 (building value player + 5)
+        rate += 2.0 * f64::from(pips) / 36.0 * (4.0 * 5.0 / 6.0);
+        cities += 1;
+    }
+    assert!(cities >= 1 && rate > 1.0 && rate < 3.0, "ore rate {rate}");
+    let roads: Vec<Option<u8>> = (0..72).map(|e| state.board.road(e)).collect();
+    state.board = Board::from_public(&buildings, &roads).unwrap();
+    // The default ranking is production-blind; projection changes the top discard.
+    let plain = Search::discard_candidates(&state, 0, 4, false);
+    let projected = Search::discard_candidates(&state, 0, 4, true);
+    assert_ne!(plain[0], projected[0]);
+    for a in plain.iter().chain(&projected) {
+        let Action::Discard { resources } = a else {
+            panic!("discard expected");
+        };
+        assert_eq!(resources.total(), 8);
+    }
+}
+
+#[test]
 fn reciprocity_scales_willingness_by_observed_acceptances() {
     use settlers_protocol::{EventBatch, OfferStatus, PublicEvent, TradeCloseReason, TradeOffer};
     let offer = |id: &str, to: Vec<u8>| PublicEvent::TradeOffered {

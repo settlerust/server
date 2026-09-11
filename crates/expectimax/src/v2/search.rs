@@ -114,6 +114,10 @@ pub struct Limits {
     /// Offer main-phase knight plays only when the robber sits on this seat's best hex, so the
     /// knight is held for the before-the-roll unblock.
     pub hold_knight: bool,
+    /// Add bank trades and roads chosen only to shed cards when the hand is over the limit.
+    pub spend_down: bool,
+    /// Rank discard choices by the kept hand plus expected production before the next turn.
+    pub discard_projection: bool,
 }
 pub struct Search<'a> {
     pub seat: u8,
@@ -670,6 +674,26 @@ impl<'a> Search<'a> {
         ]
         .map(|cost| (cost, crate::leaf::deficit(own, cost)))
     }
+    /// Sum of the four build deficits with the kept hand credited by `rates * rolls` of
+    /// expected production per resource.
+    fn deficits_projected(kept: Resources, rates: &[f64; 5], rolls: f64) -> f64 {
+        [
+            Resources::CITY,
+            Resources::SETTLEMENT,
+            Resources::DEVELOPMENT,
+            Resources::ROAD,
+        ]
+        .iter()
+        .map(|cost| {
+            (0..5)
+                .map(|r| {
+                    let have = f64::from(kept.0[r]) + rates[r] * rolls;
+                    (f64::from(cost.0[r]) - have).max(0.0)
+                })
+                .sum::<f64>()
+        })
+        .sum()
+    }
     fn bank_trades(&self, s: &State, p: u8, cap: usize) -> Vec<Action> {
         let own = s.players[p as usize].resources;
         let mut scored: Vec<(f64, Action)> = Vec::new();
@@ -705,6 +729,79 @@ impl<'a> Search<'a> {
         scored.sort_by(|a, b| b.0.total_cmp(&a.0));
         scored.into_iter().take(cap).map(|(_, a)| a).collect()
     }
+    /// Extra candidates for a hand over the discard limit: bank trades and roads chosen only
+    /// to shed cards before another seat's roll. The leaf's `hand_risk` term prices shedding
+    /// against holding; this switch only puts the choices on the list.
+    fn spend_down(&self, s: &State, p: u8, out: &mut Vec<Action>) {
+        let own = s.players[p as usize];
+        let hand = own.resources;
+        let mut trades: Vec<(f64, Action)> = Vec::new();
+        for give in Resource::ALL {
+            let ratio = trade_ratio(s, p, give);
+            if hand.0[give as usize] < ratio {
+                continue;
+            }
+            for get in Resource::ALL {
+                if get == give || s.bank.0[get as usize] == 0 {
+                    continue;
+                }
+                let after = Resources(std::array::from_fn(|r| {
+                    hand.0[r] - if r == give as usize { ratio } else { 0 }
+                        + u8::from(r == get as usize)
+                }));
+                let gain = Self::deficits(hand)
+                    .iter()
+                    .zip(Self::deficits(after))
+                    .map(|(before, later)| before.1 - later.1)
+                    .fold(0.0, f64::max);
+                // Rank by cards shed, then by the deficit change.
+                trades.push((
+                    f64::from(ratio - 1) * 10.0 + gain,
+                    Action::BankTrade {
+                        give: Resources::one(give, ratio),
+                        receive: Resources::one(get, 1),
+                    },
+                ));
+            }
+        }
+        trades.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let mut added = 0;
+        for (_, a) in trades {
+            if added == 3 {
+                break;
+            }
+            if !out.contains(&a) {
+                out.push(a);
+                added += 1;
+            }
+        }
+        if own.roads < 15 && hand.contains(Resources::ROAD) {
+            let (base_best, _) = super::leaf::reach(s, p);
+            let mut roads: Vec<(f64, u8)> = Vec::new();
+            for e in 0..72u8 {
+                if !road_allowed(s, p, e) {
+                    continue;
+                }
+                let Ok(next) = apply(s, p, Action::BuildRoad { edge: e }) else {
+                    continue;
+                };
+                let (best, others) = super::leaf::reach(&next, p);
+                roads.push((best - base_best + f64::from(others) * 0.02, e));
+            }
+            roads.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let mut added = 0;
+            for (_, e) in roads {
+                if added == 2 {
+                    break;
+                }
+                let a = Action::BuildRoad { edge: e };
+                if !out.contains(&a) {
+                    out.push(a);
+                    added += 1;
+                }
+            }
+        }
+    }
     fn plenty_candidates(s: &State, p: u8) -> Vec<Action> {
         let own = s.players[p as usize].resources;
         let count = s.bank.total().min(2);
@@ -737,25 +834,36 @@ impl<'a> Search<'a> {
         out.into_iter().take(2).map(|(_, a)| a).collect()
     }
     /// Discard choices for the root player: every multiset of the required size, ranked by
-    /// how many target-build cards survive. Returns at most `cap`.
-    pub fn discard_candidates(s: &State, p: u8, cap: usize) -> Vec<Action> {
+    /// how many target-build cards survive. Returns at most `cap`. With `project`, the kept
+    /// hand is first credited with the seat's expected production over the rolls before its
+    /// next turn, so a discard is valued by the target it preserves after that production
+    /// rather than by the current hand alone.
+    pub fn discard_candidates(s: &State, p: u8, cap: usize, project: bool) -> Vec<Action> {
         let hand = s.players[p as usize].resources;
         let k = hand.total() / 2;
-        let mut out: Vec<(f64, Resources)> = Vec::new();
+        // Non-seven rolls before the seat's next turn, at most one per seat.
+        let rolls = if project {
+            f64::from(s.settings.players) * 5.0 / 6.0
+        } else {
+            0.0
+        };
+        let rates = if project {
+            super::leaf::rates(s, p)
+        } else {
+            [0.0; 5]
+        };
+        let mut picks: Vec<Resources> = Vec::new();
         let mut pick = Resources::default();
         fn rec(
             i: usize,
             left: u16,
             hand: Resources,
             pick: &mut Resources,
-            out: &mut Vec<(f64, Resources)>,
+            out: &mut Vec<Resources>,
         ) {
             if i == 5 {
                 if left == 0 {
-                    let kept = Resources(std::array::from_fn(|r| hand.0[r] - pick.0[r]));
-                    let score = -Search::deficits(kept).iter().map(|d| d.1).sum::<f64>()
-                        + f64::from(kept.0.iter().filter(|&&n| n > 0).count() as u8) * 0.1;
-                    out.push((score, *pick));
+                    out.push(*pick);
                 }
                 return;
             }
@@ -766,7 +874,20 @@ impl<'a> Search<'a> {
             }
             pick.0[i] = 0;
         }
-        rec(0, k, hand, &mut pick, &mut out);
+        rec(0, k, hand, &mut pick, &mut picks);
+        let mut out: Vec<(f64, Resources)> = picks
+            .into_iter()
+            .map(|pick| {
+                let kept = Resources(std::array::from_fn(|r| hand.0[r] - pick.0[r]));
+                let missing = if project {
+                    Search::deficits_projected(kept, &rates, rolls)
+                } else {
+                    Search::deficits(kept).iter().map(|d| d.1).sum::<f64>()
+                };
+                let diversity = f64::from(kept.0.iter().filter(|&&n| n > 0).count() as u8);
+                (-missing + diversity * 0.1, pick)
+            })
+            .collect();
         out.sort_by(|a, b| b.0.total_cmp(&a.0));
         out.into_iter()
             .take(cap)
@@ -837,7 +958,9 @@ impl<'a> Search<'a> {
                 }
                 return roads;
             }
-            Phase::Discard { .. } => return Self::discard_candidates(s, p, 1),
+            Phase::Discard { .. } => {
+                return Self::discard_candidates(s, p, 1, self.limits.discard_projection);
+            }
             Phase::Robber { .. } => return self.robber_candidates(s, p, 4),
             Phase::Finished { .. } => return vec![],
             Phase::Roll => {
@@ -905,6 +1028,9 @@ impl<'a> Search<'a> {
         }
         out.extend(self.useful_roads(s, p, 4));
         out.extend(self.bank_trades(s, p, 4));
+        if self.limits.spend_down && own.resources.total() > s.settings.discard_limit as u16 {
+            self.spend_down(s, p, &mut out);
+        }
         out
     }
 

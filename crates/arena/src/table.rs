@@ -98,6 +98,9 @@ pub struct SeatRecord {
     pub player_trades: u32,
     pub cards_discarded: u32,
     pub times_robbed: u32,
+    /// Turns this seat ended holding more cards than the discard limit.
+    #[serde(default)]
+    pub turns_over_limit: u32,
     pub effort: Effort,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,6 +339,15 @@ impl Table {
                     records[player as usize].cards_discarded += u32::from(count)
                 }
                 Event::Stole { victim, .. } => records[victim as usize].times_robbed += 1,
+                Event::TurnChanged { .. } => {
+                    // The state still holds the seat whose turn just ended.
+                    let ending = self.state.current as usize;
+                    if self.state.players[ending].resources.total()
+                        > self.state.settings.discard_limit as u16
+                    {
+                        records[ending].turns_over_limit += 1;
+                    }
+                }
                 _ => {}
             }
             if let Event::Stole { player, victim, .. } = event {
