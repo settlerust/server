@@ -463,6 +463,36 @@ fn actor(s: &State) -> u8 {
 }
 
 /// Play one game to completion or a cap. Seat `i` sits at engine seat `i`.
+/// Append a seat's summary of the decision it just made to the trace, tagged with the seat,
+/// the turn, the wall time, and the command chosen. `response` marks a recipient's answer to
+/// an open offer or the offerer's reply to a counter, decisions the main loop never sees.
+fn record_trace(
+    trace: &mut Vec<serde_json::Value>,
+    seat: &mut dyn Seat,
+    p: u8,
+    turn: u32,
+    ms: f64,
+    command: &Option<Command>,
+    response: Option<&str>,
+) {
+    let Some(mut entry) = seat.trace() else {
+        return;
+    };
+    if let Some(map) = entry.as_object_mut() {
+        map.insert("seat".into(), serde_json::json!(p));
+        map.insert("turn".into(), serde_json::json!(turn));
+        map.insert("ms".into(), serde_json::json!(ms));
+        map.insert(
+            "chosen".into(),
+            serde_json::to_value(command).unwrap_or_default(),
+        );
+        if let Some(response) = response {
+            map.insert("response".into(), serde_json::json!(response));
+        }
+    }
+    trace.push(entry);
+}
+
 pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameRecord, String> {
     let n = table.settings.players as usize;
     if seats.len() != n {
@@ -549,19 +579,16 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
         let clock = Instant::now();
         let command = seats[pi].choose(&view, &t.histories[pi]);
         let ms = clock.elapsed().as_secs_f64() * 1000.0;
-        if table.trace
-            && let Some(mut entry) = seats[pi].trace()
-        {
-            if let Some(map) = entry.as_object_mut() {
-                map.insert("seat".into(), serde_json::json!(p));
-                map.insert("turn".into(), serde_json::json!(t.state.turn));
-                map.insert("ms".into(), serde_json::json!(ms));
-                map.insert(
-                    "chosen".into(),
-                    serde_json::to_value(&command).unwrap_or_default(),
-                );
-            }
-            trace.push(entry);
+        if table.trace {
+            record_trace(
+                &mut trace,
+                seats[pi].as_mut(),
+                p,
+                t.state.turn,
+                ms,
+                &command,
+                None,
+            );
         }
         decisions += 1;
         records[pi].decisions += 1;
@@ -669,6 +696,17 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                     let clock = Instant::now();
                     let answer = seats[ri].choose(&rview, &t.histories[ri]);
                     let ms = clock.elapsed().as_secs_f64() * 1000.0;
+                    if table.trace {
+                        record_trace(
+                            &mut trace,
+                            seats[ri].as_mut(),
+                            r,
+                            t.state.turn,
+                            ms,
+                            &answer,
+                            Some("answer"),
+                        );
+                    }
                     records[ri].decisions += 1;
                     records[ri].decision_ms += ms;
                     records[ri].max_decision_ms = records[ri].max_decision_ms.max(ms);
@@ -750,6 +788,17 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                             let clock = Instant::now();
                             let reply = seats[pi].choose(&pview, &t.histories[pi]);
                             let ms = clock.elapsed().as_secs_f64() * 1000.0;
+                            if table.trace {
+                                record_trace(
+                                    &mut trace,
+                                    seats[pi].as_mut(),
+                                    p,
+                                    t.state.turn,
+                                    ms,
+                                    &reply,
+                                    Some("reply"),
+                                );
+                            }
                             records[pi].decisions += 1;
                             records[pi].decision_ms += ms;
                             records[pi].max_decision_ms = records[pi].max_decision_ms.max(ms);

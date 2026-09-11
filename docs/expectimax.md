@@ -642,7 +642,10 @@ Seat specs are `fast`, `eta`, `legal`, `v1`, `v2`, or `v1:{json}` and
 the search with learned tables. Output is one JSON line per game with
 the winner, per-seat points, builds, development cards bought, knights played, largest-army
 awards gained, the turn of the first city, trades, discards, decision timing, and search
-effort; `--trace` adds each search seat's top candidates per decision. Player
+effort; `--trace` adds each search seat's top candidates per decision, including
+its answers to open offers and its replies to counters, which carry a `response`
+tag (`answer` or `reply`) because the table asks for them outside the main
+decision loop. Player
 trades are resolved by asking each recipient in turn, starting from a seat that
 rotates with the seed and version so that no slot is always asked first; the
 first acceptance commits. The rotation did not remove the seating term between
