@@ -187,6 +187,8 @@ pub struct SearchConfig {
     /// Endgame switches: a race leaf against a near-winning leader, expected hidden victory
     /// points, and late robber and road bias toward the leader. See `EndgameConfig`.
     pub endgame: weights::EndgameConfig,
+    /// Robber candidate scoring switches; see `RobberConfig`.
+    pub robber: RobberConfig,
 }
 /// Build prediction switches. Each is off by default, reproducing the search exactly.
 /// `opponents` makes the lookahead's opponent model execute each opponent's predicted next
@@ -214,6 +216,23 @@ pub enum CacheMode {
     None,
     Decision,
     Turn,
+}
+/// Robber candidate scoring. All switches off is the original behaviour: blocked opponent pips
+/// weighted by the blocked seat's public points, plus a victim bonus for hand size and points.
+/// The score only orders the shortlist of placements the lookahead then values; it is not
+/// the value the search assigns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RobberConfig {
+    /// Weight the hex score toward the points leader: the leader's blocked pips count in
+    /// full, every other seat's at a tenth.
+    pub leader: bool,
+    /// Choose the victim by the expected share of the resource this seat most needs, from
+    /// its resource knowledge, instead of by hand size.
+    pub need: bool,
+    /// Weight each seat's blocked pips by their threat, and never steal from a seat whose
+    /// threat is below 0.5 while any placement without such a victim exists.
+    pub threat: bool,
 }
 impl Default for SearchConfig {
     fn default() -> Self {
@@ -248,6 +267,7 @@ impl Default for SearchConfig {
             accept_asks: true,
             predict: PredictConfig::default(),
             endgame: weights::EndgameConfig::default(),
+            robber: RobberConfig::default(),
         }
     }
 }
@@ -290,6 +310,9 @@ impl SearchConfig {
             } else {
                 self.opening
             },
+            robber: self.robber,
+            expected_hands: None,
+            predict_threat: self.predict.threat,
         }
     }
 }
@@ -389,6 +412,19 @@ pub fn analyze_with(
         .collect();
     let mut weights = config.inclinations.apply(config.weights);
     weights.endgame = config.endgame;
+    // Expected hidden-hand composition per seat, for the need-aware robber victim bonus.
+    let expected_hands: Option<[[f64; 5]; 4]> = config.robber.need.then(|| {
+        let mut table = [[0.0; 5]; 4];
+        for (entry, estimate) in table.iter_mut().zip(&knowledge.players) {
+            *entry = estimate.expected;
+        }
+        table
+    });
+    let limits_of = |depth: u8| {
+        let mut limits = config.limits(depth);
+        limits.expected_hands = expected_hands;
+        limits
+    };
     let partner_factor = if config.reciprocity {
         reciprocity(history, seat)
     } else {
@@ -454,7 +490,7 @@ pub fn analyze_with(
         let probe = Search::new(
             seat,
             weights,
-            config.limits(1),
+            limits_of(1),
             &|| false,
             leaf.clone(),
             &mut probe_cache,
@@ -579,7 +615,7 @@ pub fn analyze_with(
         let mut search = Search::new(
             seat,
             weights,
-            config.limits(depth),
+            limits_of(depth),
             &over_time,
             leaf.clone(),
             cache,
@@ -1034,7 +1070,7 @@ pub fn analyze_with(
             let mut search = Search::new(
                 seat,
                 weights,
-                config.limits(1),
+                limits_of(1),
                 &|| false,
                 leaf.clone(),
                 &mut fallback_cache,

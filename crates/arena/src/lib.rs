@@ -5,4 +5,4 @@
 pub mod seats;
 pub mod table;
 pub use seats::{Seat, SeatSpec, build_seat};
-pub use table::{GameRecord, SeatRecord, Table, TableSettings, play};
+pub use table::{GameRecord, RobberMove, SeatRecord, Table, TableSettings, play};

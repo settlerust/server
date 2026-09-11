@@ -41,6 +41,19 @@ impl Default for TableSettings {
         }
     }
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RobberMove {
+    pub turn: u32,
+    pub player: u8,
+    pub hex: u8,
+    /// None when the move stole nothing (no eligible victim).
+    pub victim: Option<u8>,
+    /// The points leader among the mover's rivals at this move; ties go to the lower seat.
+    pub leader: u8,
+    /// That seat's highest-pip hex, cities counting double (the human-style obvious block);
+    /// None when that seat has no producing hex outside the robber's current one.
+    pub leader_hex: Option<u8>,
+}
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SeatRecord {
     pub seat: u8,
@@ -83,6 +96,8 @@ pub struct GameRecord {
     pub seed: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trace: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub robber_moves: Vec<RobberMove>,
     pub players: u8,
     pub status: String,
     pub winner: Option<u8>,
@@ -150,6 +165,8 @@ pub struct Table {
     labels: Vec<String>,
     /// The stolen resource is known to the table between a transition and its publication.
     last_theft: Option<Resource>,
+    /// Robber placements of this game, with the leader diagnostics measured at the move.
+    robber_moves: Vec<RobberMove>,
 }
 impl Table {
     pub fn view(&self, seat: u8, offers: &[TradeOffer]) -> GameView {
@@ -225,6 +242,56 @@ impl Table {
         self.last_theft = None;
         for event in &events {
             *counts.entry(event_name(event).into()).or_default() += 1;
+            match *event {
+                Event::RobberMoved { player, hex } => {
+                    let leader = (0..self.state.settings.players)
+                        .filter(|&q| q != player)
+                        .max_by_key(|&q| (public_points(&self.state, q), std::cmp::Reverse(q)))
+                        .unwrap_or(player);
+                    let leader_hex = (0..19u8)
+                        .filter(|&h| h != self.state.robber)
+                        .filter_map(|h| {
+                            let pips = f64::from(
+                                6u8.saturating_sub(self.state.layout.number(h).abs_diff(7)),
+                            );
+                            if pips <= 0.0 {
+                                return None;
+                            }
+                            let mut value = 0.0;
+                            for &v in &topology().hex_vertices[h as usize] {
+                                if self.state.board.owner(v) == Some(leader) {
+                                    value += pips
+                                        * if self.state.board.building(v) > 4 {
+                                            2.0
+                                        } else {
+                                            1.0
+                                        };
+                                }
+                            }
+                            (value > 0.0).then_some((value, h))
+                        })
+                        .max_by(|a, b| a.0.total_cmp(&b.0))
+                        .map(|(_, h)| h);
+                    self.robber_moves.push(RobberMove {
+                        turn: self.state.turn,
+                        player,
+                        hex,
+                        victim: None,
+                        leader,
+                        leader_hex,
+                    });
+                }
+                Event::Stole { player, victim, .. } => {
+                    if let Some(last) = self
+                        .robber_moves
+                        .last_mut()
+                        .filter(|m| m.player == player && m.victim.is_none())
+                    {
+                        last.victim = Some(victim);
+                    }
+                }
+                _ => {}
+            }
             match *event {
                 Event::BuiltSettlement { player, .. } if self.state.turn > 0 => {
                     records[player as usize].settlements_built += 1
@@ -346,6 +413,7 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
         histories: vec![vec![]; n],
         labels: labels.clone(),
         last_theft: None,
+        robber_moves: Vec::new(),
     };
     t.publish(&mut seats, vec![PublicEvent::Started]);
     let mut records: Vec<SeatRecord> = (0..n)
@@ -737,6 +805,7 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
     Ok(GameRecord {
         seed: table.seed,
         trace,
+        robber_moves: t.robber_moves,
         players: n as u8,
         status: status.into(),
         winner: match t.state.phase {
