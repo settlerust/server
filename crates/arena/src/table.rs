@@ -115,6 +115,13 @@ pub struct SeatRecord {
     /// Turns this seat ended holding more cards than the discard limit.
     #[serde(default)]
     pub turns_over_limit: u32,
+    /// Sum of this seat's hand sizes at every roll of the game, before that roll's
+    /// production or discards, and the number of rolls; the mean hand size at the
+    /// roll is the sum divided by the count.
+    #[serde(default)]
+    pub hand_at_roll_sum: u32,
+    #[serde(default)]
+    pub hand_at_roll_count: u32,
     pub effort: Effort,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +373,15 @@ impl Table {
                 }
                 Event::Discarded { player, count } => {
                     records[player as usize].cards_discarded += u32::from(count)
+                }
+                Event::Rolled { .. } => {
+                    // The state is the pre-roll one, so each hand is read before this
+                    // roll's production and before any discard the roll forces.
+                    for (seat, record) in records.iter_mut().enumerate() {
+                        record.hand_at_roll_sum +=
+                            u32::from(self.state.players[seat].resources.total());
+                        record.hand_at_roll_count += 1;
+                    }
                 }
                 Event::Stole { victim, .. } => records[victim as usize].times_robbed += 1,
                 Event::TurnChanged { .. } => {
