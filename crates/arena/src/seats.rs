@@ -18,6 +18,11 @@ pub struct Effort {
     pub errors: u64,
     pub depth_total: u64,
     pub aborted: u64,
+    /// Searches answered, and how many completed each depth (index 6 collects deeper ones).
+    #[serde(default)]
+    pub searches: u64,
+    #[serde(default)]
+    pub depths: [u64; 7],
 }
 pub trait Seat: Send {
     fn label(&self) -> String;
@@ -177,6 +182,8 @@ impl Seat for TunableExpectimax {
                 self.effort.candidates += report.candidates.len() as u64;
                 self.effort.depth_total += u64::from(report.statistics.depth_completed);
                 self.effort.aborted += u64::from(report.statistics.aborted);
+                self.effort.searches += 1;
+                self.effort.depths[(report.statistics.depth_completed as usize).min(6)] += 1;
                 self.last = Some(summarize(&report));
                 report.candidates.into_iter().next().and_then(|c| c.command)
             }

@@ -213,7 +213,10 @@ first depth, and with `deepen_gap` above zero deepening stops as soon as the
 best candidate leads the runner-up by at least that many leaf units (a settled
 decision), so close decisions get the deep search and clear ones do not. With
 `time_budget_ms: 0` only the node budget and the gap rule apply and reports are
-reproducible bit for bit.
+reproducible bit for bit. The node budget bounds each depth pass on its own; with
+`total_budget` it is shared by every pass of the decision, the way the clock is, and
+`deepen_fraction` then applies to the transitions used so far instead of the elapsed
+time, so a deterministic node budget can stand in for a wall-clock budget.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -228,6 +231,7 @@ reproducible bit for bit.
 | `iterative` | true | Iterative deepening; false searches only `depth` |
 | `deepen_fraction` | 0.3 | Deepen only while elapsed time is below this share of the budget |
 | `deepen_gap` | 0 | Stop deepening once the best candidate leads by this many leaf units; 0 disables |
+| `total_budget` | false | Count the node budget over every depth pass of the decision and apply `deepen_fraction` to it, so a node budget stops deepening the way the clock does |
 | `explain` | false | Report the expected end-of-turn outcomes of the chosen action with probabilities |
 | `cache` | `none` | Transposition tables: `none` per depth pass, `decision` across the passes of one decision, `turn` across the decisions of a turn |
 | `spend_down` | false | Over the discard limit, also consider bank trades and roads chosen only to shed cards |

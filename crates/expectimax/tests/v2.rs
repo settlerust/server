@@ -630,3 +630,93 @@ fn shared_tables_within_a_decision_reproduce_fresh_tables_bit_for_bit() {
     assert!(compared >= 10, "{compared} decisions compared");
     assert!(saved > 0, "shared tables never saved work");
 }
+
+#[test]
+fn total_budget_counts_every_pass_and_applies_the_deepening_share() {
+    let (mut state, history) = common::fixture(4);
+    let mut steps = 0;
+    while !(state.phase == Phase::Main && state.current == 0 && state.turn > 8) && steps < 2000 {
+        let actor = match state.phase {
+            Phase::Discard { pending } => pending.trailing_zeros() as u8,
+            _ => state.current,
+        };
+        let a = settlers_expectimax::v2::opponent::act(&state, actor, 0);
+        state = apply(&state, actor, a).unwrap_or_else(|_| {
+            apply(
+                &state,
+                actor,
+                *legal_actions(&state, actor).first().unwrap(),
+            )
+            .unwrap()
+        });
+        steps += 1;
+    }
+    let view = common::view(&state, 0, history.len() as u64);
+    let cost = |depth: u8| {
+        let single = SearchConfig {
+            depth,
+            iterative: false,
+            node_budget: 50_000_000,
+            ..quick()
+        };
+        analyze(&view, &history, &single, None, &|| 0.0)
+            .unwrap()
+            .statistics
+            .transitions
+    };
+    let (t1, t2, t3) = (cost(1), cost(2), cost(3));
+    assert!(t3 > t2 && t2 > t1 && t1 > 0);
+    let per_pass = SearchConfig {
+        depth: 3,
+        node_budget: 50_000_000,
+        ..quick()
+    };
+    let open = analyze(&view, &history, &per_pass, None, &|| 0.0).unwrap();
+    assert!(open.candidates.len() >= 2);
+    assert_eq!(open.statistics.depth_completed, 3);
+    assert_eq!(open.statistics.transitions, t1 + t2 + t3);
+    // A total budget that never binds reproduces the per-pass search bit for bit.
+    let total = SearchConfig {
+        total_budget: true,
+        deepen_fraction: 1.0,
+        ..per_pass
+    };
+    let same = analyze(&view, &history, &total, None, &|| 0.0).unwrap();
+    assert_eq!(same.statistics.depth_completed, 3);
+    for (a, b) in open.candidates.iter().zip(&same.candidates) {
+        assert_eq!(a.command, b.command);
+        assert_eq!(a.expected_value.to_bits(), b.expected_value.to_bits());
+    }
+    // The third pass runs out once the first two have used their share of the total.
+    let cut = analyze(
+        &view,
+        &history,
+        &SearchConfig {
+            node_budget: t1 + t2 + t3 / 2,
+            ..total.clone()
+        },
+        None,
+        &|| 0.0,
+    )
+    .unwrap();
+    assert_eq!(cut.statistics.depth_completed, 2);
+    assert!(cut.statistics.aborted);
+    assert!(cut.statistics.transitions < t1 + t2 + t3);
+    // The deepening share stops the search after the pass that crosses it.
+    let budget = t1 + t2 + t3 + 1;
+    let shared = analyze(
+        &view,
+        &history,
+        &SearchConfig {
+            node_budget: budget,
+            deepen_fraction: (t1 as f64 + 1.0) / budget as f64,
+            ..total
+        },
+        None,
+        &|| 0.0,
+    )
+    .unwrap();
+    assert_eq!(shared.statistics.depth_completed, 2);
+    assert!(!shared.statistics.aborted);
+    assert_eq!(shared.statistics.transitions, t1 + t2);
+}

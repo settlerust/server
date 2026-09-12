@@ -151,6 +151,11 @@ pub struct SearchConfig {
     /// many leaf units the decision is treated as settled and deepening stops. Zero disables
     /// the rule. A position with a single candidate never deepens past the first depth.
     pub deepen_gap: f64,
+    /// Count the node budget over every depth pass of the decision, the way the clock counts
+    /// time, and apply `deepen_fraction` to it: the next depth starts only while the
+    /// transitions used so far are below that share of the budget. Off, the budget bounds
+    /// each pass on its own and the fraction rule needs a clock.
+    pub total_budget: bool,
     /// Explain mode: report the distribution of end-of-turn positions the chosen action leads
     /// to at every planned level, with probabilities. Costs memory, never changes the decision.
     pub explain: bool,
@@ -276,6 +281,7 @@ impl Default for SearchConfig {
             leaf: LeafConfig::default(),
             deepen_fraction: 0.3,
             deepen_gap: 0.0,
+            total_budget: false,
             explain: false,
             cache: CacheMode::None,
             opening: OpeningMode::Planner,
@@ -642,14 +648,11 @@ pub fn analyze_with(
         if config.cache == CacheMode::None {
             cache.clear();
         }
-        let mut search = Search::new(
-            seat,
-            weights,
-            limits_of(depth),
-            &over_time,
-            leaf.clone(),
-            cache,
-        );
+        let mut limits = limits_of(depth);
+        if config.total_budget {
+            limits.node_budget = config.node_budget.saturating_sub(cumulative.transitions);
+        }
+        let mut search = Search::new(seat, weights, limits, &over_time, leaf.clone(), cache);
         search.record = config.explain;
         let mut rows: Vec<Row> = Vec::new();
         let mut recorded: Vec<Vec<search::Outcome>> = Vec::new();
@@ -1088,7 +1091,12 @@ pub fn analyze_with(
         }
         let settled = settled_decision(&rows, config.deepen_gap);
         best_report = Some((depth, rows, stats, recorded));
-        if settled || (deadline_ms > 0.0 && clock() > deadline_ms * config.deepen_fraction) {
+        let over_share = config.total_budget
+            && cumulative.transitions as f64 > config.node_budget as f64 * config.deepen_fraction;
+        if settled
+            || (deadline_ms > 0.0 && clock() > deadline_ms * config.deepen_fraction)
+            || over_share
+        {
             break;
         }
     }
