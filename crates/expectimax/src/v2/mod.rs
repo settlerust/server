@@ -84,11 +84,12 @@ impl Leaf {
         matches!(self, Self::Hand)
     }
     /// Static value of a position from seat `p`'s perspective. A finished game is exact in
-    /// both leaves; the tables never see terminal positions.
+    /// both leaves; the tables never see terminal positions. `knight_play_value` shapes the
+    /// hand-written development term, including the blend under a tables leaf.
     #[inline]
-    pub fn evaluate(&self, s: &State, p: u8, w: &Weights) -> leaf::Terms {
+    pub fn evaluate(&self, s: &State, p: u8, w: &Weights, knight_play_value: bool) -> leaf::Terms {
         match self {
-            Self::Hand => leaf::evaluate(s, p, w),
+            Self::Hand => leaf::evaluate_with(s, p, w, knight_play_value),
             Self::Tables { model, scale, hand } => {
                 let mut terms = leaf::Terms::default();
                 if let Phase::Finished { winner } = s.phase {
@@ -101,7 +102,7 @@ impl Leaf {
                     .0
                     .insert("tables", f64::from(model.value(s, p)) * scale);
                 if *hand > 0.0 {
-                    terms.add_scaled(&leaf::evaluate(s, p, w), *hand);
+                    terms.add_scaled(&leaf::evaluate_with(s, p, w, knight_play_value), *hand);
                 }
                 terms
             }
