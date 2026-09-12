@@ -644,7 +644,10 @@ Seat specs are `fast`, `eta`, `legal`, `v1`, `v2`, or `v1:{json}` and
 the search with learned tables. Output is one JSON line per game with
 the winner, per-seat points, builds, development cards bought, knights played, largest-army
 awards gained, the turn of the first city, trades, discards, decision timing, and search
-effort; `--trace` adds each search seat's top candidates per decision. Player
+effort; `--trace` adds each search seat's top candidates per decision. Each seat
+record also carries `hand_at_roll_sum` and `hand_at_roll_count`, the seat's hand
+sizes summed over the game's rolls before each roll's production or discards, so
+the mean hand size at the roll is the sum divided by the count. Player
 trades are resolved by asking each recipient in turn, starting from a seat that
 rotates with the seed and version so that no slot is always asked first; the
 first acceptance commits. The rotation did not remove the seating term between
