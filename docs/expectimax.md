@@ -312,19 +312,21 @@ its estimated `turns_per_player` length.
 ### Development-card timing switches
 
 Three development-card switches change how the search values and times cards; each is one
-registered mechanism and defaults to the behaviour above. They apply to the hand-written
-leaf and its candidate generator; a tables leaf ignores them. With `knight_play_value` the
-development term replaces the flat `knight` per played knight with a largest-army schedule:
-half the weight when three or more knights from taking the award, the full weight at two
-away, 1.75 times at one away, and 1.25 times while holding it; a held playable knight is
-also credited with one roll of the production it would unblock, so a knight held against a
-robber on this seat's own hex is worth more. With `buy_tempo` a development purchase is
-generated only when no road, settlement, or city is affordable within the next own turn at
-current production (the leaf's acquisition-time estimate), making the buy a fallback for
-stalls rather than a competitor to visible builds. With `hold_knight` a main-phase knight
-play is generated only when the robber sits on this seat's best-producing hex, so knights
-are kept for the before-the-roll unblock; the roll phase keeps both choices, and the search
-still decides whether the play is worth it there.
+registered mechanism and defaults to the behaviour above. `buy_tempo` and `hold_knight`
+are candidate rules and act under either leaf. `knight_play_value` shapes the hand-written
+development term, so it applies wherever those terms are evaluated: the hand leaf, and the
+`leaf.hand` blend under a tables leaf; the tables alone ignore it. With `knight_play_value`
+the development term replaces the flat `knight` per played knight with a largest-army
+schedule: half the weight when three or more knights from taking the award, the full
+weight at two away, 1.75 times at one away, and 1.25 times while holding it; a held
+playable knight is also credited with one roll of the production it would unblock, so a
+knight held against a robber on this seat's own hex is worth more. With `buy_tempo` a
+development purchase is generated only when no road, settlement, or city is affordable
+within the next own turn at current production (the leaf's acquisition-time estimate),
+making the buy a fallback for stalls rather than a competitor to visible builds. With
+`hold_knight` a main-phase knight play is generated only when the robber sits on this
+seat's best-producing hex, so knights are kept for the before-the-roll unblock; the roll
+phase keeps both choices, and the search still decides whether the play is worth it there.
 
 Contributions in a report are the mass-weighted sums of these terms across the
 expanded continuations. The reported `statistics` include transitions, leaves,

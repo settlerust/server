@@ -565,12 +565,8 @@ impl<'a> Search<'a> {
     /// Static value of a position from seat `p`'s perspective under the configured leaf.
     #[inline]
     pub fn value(&self, s: &State, p: u8) -> Terms {
-        match &self.model {
-            super::Leaf::Hand => {
-                super::leaf::evaluate_with(s, p, &self.w, self.limits.knight_play_value)
-            }
-            tables => tables.evaluate(s, p, &self.w),
-        }
+        self.model
+            .evaluate(s, p, &self.w, self.limits.knight_play_value)
     }
     fn tick(&mut self, n: u64) {
         self.stats.transitions += n;

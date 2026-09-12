@@ -171,3 +171,33 @@ fn hold_knight_reserves_main_phase_plays_for_the_blocked_best_hex() {
     let treatment = candidates(&state, 0, held);
     assert_eq!(treatment, vec![Action::Roll, Action::PlayKnight]);
 }
+
+#[test]
+fn blended_tables_leaf_honours_knight_play_value() {
+    use settlers_expectimax::ntuple::{Layout, Model};
+    use std::sync::Arc;
+    let (mut state, _) = common::fixture(4);
+    let w = Weights::default();
+    // Two knights played, nobody near the award: one away, 1.75 times the flat weight.
+    state.players[0].played_knights = 2;
+    let model = || {
+        Arc::new(Model::new(
+            Layout::parse("hex,portfolio").unwrap(),
+            0.25,
+            false,
+        ))
+    };
+    let blend = Leaf::tables(model(), 1000.0, 1.0);
+    let flat = blend.evaluate(&state, 0, &w, false).0["development"];
+    let shaped = blend.evaluate(&state, 0, &w, true).0["development"];
+    assert_eq!(flat, 2.0 * w.knight);
+    assert_eq!(shaped, 2.0 * w.knight * 1.75);
+    // The tables alone carry no hand-written development term for the flag to shape.
+    let tables_only = Leaf::tables(model(), 1000.0, 0.0);
+    assert!(
+        !tables_only
+            .evaluate(&state, 0, &w, true)
+            .0
+            .contains_key("development")
+    );
+}
