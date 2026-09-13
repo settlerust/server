@@ -6,6 +6,7 @@ fn offer(give: u8, receive: u8) -> Command {
         to: vec![1, 2],
         give: Resources([give, 0, 0, 0, 0]),
         receive: Resources([0, receive, 0, 0, 0]),
+        expires_in_ms: None,
         message: None,
     }
 }
@@ -43,6 +44,7 @@ async fn better_offers_replace_worse_ones_and_acceptance_invalidates_unfunded_pr
             to: vec![1],
             give: Resources([2, 0, 0, 0, 0]),
             receive: Resources([0, 0, 1, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )

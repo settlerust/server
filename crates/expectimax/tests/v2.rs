@@ -275,6 +275,9 @@ fn reciprocity_scales_willingness_by_observed_acceptances() {
             receive: Resources::one(Resource::Ore, 1),
             message: None,
             status: OfferStatus::Open,
+            thinking: vec![],
+            created_at_ms: None,
+            expires_at_ms: None,
             declined: vec![],
         },
     };

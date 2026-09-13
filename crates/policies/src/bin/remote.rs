@@ -136,7 +136,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     break;
                                 }
                             };
-                            if let Some(command) = policy.choose(&game) {
+                            if let Some(mut command) = policy.choose(&game) {
+                                if let Command::OfferTrade { expires_in_ms, .. } = &mut command {
+                                    *expires_in_ms = Some(trade_wait.clamp(1_000, 300_000) as u32);
+                                }
                                 let offering = matches!(command, Command::OfferTrade { .. });
                                 let request = Client::prepare(game.version, command.clone());
                                 let mut result = client.submit(id, &request).await;

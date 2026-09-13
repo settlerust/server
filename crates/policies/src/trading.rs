@@ -89,6 +89,7 @@ impl Policy for TradingPolicy {
             to,
             give,
             receive,
+            expires_in_ms: None,
             message: Some(Communication {
                 intent: Intent::RequestTrade,
                 resources: Some(receive),

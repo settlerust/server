@@ -1373,8 +1373,8 @@ impl<'a> Search<'a> {
                 let mut steps = 0u32;
                 let mut turn_steps = 0u32;
                 let mut turn_key = (s.turn, s.current);
-                while !matches!(s.phase, Phase::Finished { .. })
-                    && !(s.current == self.seat && s.phase == Phase::Main && actor(&s) == self.seat)
+                while !(matches!(s.phase, Phase::Finished { .. })
+                    || s.current == self.seat && s.phase == Phase::Main && actor(&s) == self.seat)
                     && steps < MAX_STEPS
                 {
                     if (s.turn, s.current) != turn_key {

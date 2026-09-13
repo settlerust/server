@@ -119,7 +119,7 @@ pub fn duplicate(
     Ok(None)
 }
 pub fn reduce(input: &Room, event: Input, now: u64) -> Result<(Room, Record)> {
-    reduce_version(input, event, now, "base-v7")
+    reduce_version(input, event, now, "base-v8")
 }
 fn reduce_version(
     input: &Room,
@@ -130,6 +130,10 @@ fn reduce_version(
     let legacy = engine_version == "base-v1";
     let mut room = input.clone();
     let mut public = vec![];
+    let timed_trades = engine_version == "base-v8";
+    if timed_trades {
+        trades::expire_due(&mut room, now, &mut public);
+    }
     match &event {
         Input::Admission { identity, request } => {
             admission::update(&mut room, identity, request)?;
@@ -177,16 +181,18 @@ fn reduce_version(
             *connected,
             now,
             &mut public,
-            engine_version == "base-v7",
+            matches!(engine_version, "base-v7" | "base-v8"),
         )?,
         Input::Timeout => {
-            if room.deadline_ms.is_none_or(|d| d > now) {
+            if room.deadline_ms.is_none_or(|d| d > now) && public.is_empty() {
                 return Err(Error::new(
                     ErrorCode::InvalidRequest,
                     "turn deadline has not expired",
                 ));
             }
-            discard::timeout(&mut room, now, &mut public, legacy)?;
+            if room.deadline_ms.is_some_and(|d| d <= now) {
+                discard::timeout(&mut room, now, &mut public, legacy)?;
+            }
         }
         Input::Create { .. } => {
             return Err(Error::new(
@@ -208,13 +214,13 @@ fn reduce_version(
     }
     if matches!(
         engine_version,
-        "base-v4" | "base-v5" | "base-v6" | "base-v7"
+        "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8"
     ) {
         trades::prune(&mut room, &mut public);
     }
     if matches!(
         engine_version,
-        "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7"
+        "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8"
     ) {
         append_theft_details(input, &room, &mut public);
     }
@@ -267,11 +273,14 @@ fn command(
 ) -> Result<()> {
     let modern = matches!(
         engine_version,
-        "base-v4" | "base-v5" | "base-v6" | "base-v7"
+        "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8"
     );
-    let require_ready = matches!(engine_version, "base-v5" | "base-v6" | "base-v7");
-    let close_declined = matches!(engine_version, "base-v6" | "base-v7");
-    let lock_opening = engine_version == "base-v7";
+    let require_ready = matches!(
+        engine_version,
+        "base-v5" | "base-v6" | "base-v7" | "base-v8"
+    );
+    let close_declined = matches!(engine_version, "base-v6" | "base-v7" | "base-v8");
+    let lock_opening = matches!(engine_version, "base-v7" | "base-v8");
     if let Command::Join { name, spectator } = command {
         if room.research && !spectator {
             return Err(Error::new(
@@ -330,10 +339,19 @@ fn command(
             give,
             receive,
             message,
+            expires_in_ms,
         } => {
             let p = seat(room, identity)?;
             messaging::validate(message.as_ref())?;
             messaging::rate_limit(room, p, now)?;
+            let lifetime = expires_in_ms.unwrap_or(30_000);
+            if !(1_000..=300_000).contains(&lifetime) {
+                return Err(Error::new(
+                    ErrorCode::InvalidRequest,
+                    "offer lifetime must be between 1 and 300 seconds",
+                ));
+            }
+            let timed = engine_version == "base-v8";
             trades::offer(
                 room,
                 p,
@@ -346,6 +364,12 @@ fn command(
                     message: message.clone(),
                     status: OfferStatus::Open,
                     declined: Vec::new(),
+                    thinking: Vec::new(),
+                    created_at_ms: timed.then_some(now),
+                    expires_at_ms: timed.then(|| {
+                        now.saturating_add(u64::from(lifetime))
+                            .min(room.deadline_ms.unwrap_or(u64::MAX))
+                    }),
                 },
                 events,
                 modern,
@@ -359,6 +383,10 @@ fn command(
         Command::RejectTrade { offer_id } => {
             let p = seat(room, identity)?;
             trades::reject(room, p, offer_id, events, close_declined)
+        }
+        Command::ThinkTrade { offer_id } => {
+            let p = seat(room, identity)?;
+            trades::think(room, p, offer_id, events)
         }
         Command::CancelTrade { offer_id } => {
             let p = seat(room, identity)?;
@@ -415,7 +443,7 @@ pub fn state_hash(room: &Room) -> Result<String> {
 fn record(room: &Room, input: Input, now: u64, public: Vec<PublicEvent>) -> Result<Record> {
     Ok(Record {
         schema: 1,
-        engine_version: "base-v7".into(),
+        engine_version: "base-v8".into(),
         game_id: room.id.clone(),
         sequence: room.version,
         timestamp_ms: now,
@@ -431,7 +459,14 @@ pub fn replay(records: &[Record]) -> Result<Room> {
         if record.schema != 1
             || !matches!(
                 record.engine_version.as_str(),
-                "base-v1" | "base-v2" | "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7"
+                "base-v1"
+                    | "base-v2"
+                    | "base-v3"
+                    | "base-v4"
+                    | "base-v5"
+                    | "base-v6"
+                    | "base-v7"
+                    | "base-v8"
             )
         {
             return Err(Error::new(

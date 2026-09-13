@@ -89,7 +89,7 @@ The `remote` binary wraps its selected builder policy with a trade proposer. It 
 
 ## Timed, staged discards
 
-Staged discards introduced archive engine version `base-v2`; current transitions use `base-v4`. Replay retains the `base-v1` deadline and timeout behavior for older records. A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
+Staged discards introduced archive engine version `base-v2`; current transitions use `base-v8`. Replay retains the `base-v1` deadline and timeout behavior for older records. A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
 
 The owning `GameView.discard` contains the round `id`, fixed `required` count, editable `draft`, confirmed `locked` cards, and `deadline_ms`. It is absent for spectators and only contains the recipient's choices. Send `select_discard { discard_id, resources }` to replace the draft, then `confirm_discard { discard_id }` to lock it. Multiple confirmations may fill the quota. These commands tolerate other seats advancing the room version but require the exact active round ID. Receipts remain idempotent. Confirmed cards cannot be removed, and the engine applies one exact discard when the quota is complete. The legacy `act/discard` command still works for agents; it must include previously locked cards.
 
@@ -141,8 +141,8 @@ leaving the target cancels. Keyboard choices confirm on keyup and blur cancels.
 
 ## Atomic trade replacement
 
-Current archives use `base-v4`; replay retains the original reducer behavior for
-`base-v1` through `base-v3`. An improved offer to the exact same recipient set
+Atomic replacement was introduced in `base-v4`; replay retains the original
+reducer behavior for earlier archives. An improved offer to the exact same recipient set
 replaces an open offer from the same sender when it gives at least as much of
 every resource, asks at most as much of every resource, and strictly improves one
 quantity. The server cancels dominated offers before applying the open-offer cap.
@@ -153,3 +153,44 @@ replacement therefore have one committed winner. After any resource-changing
 transition, unfunded open offers are retracted in the same state/outbox commit.
 The new public close reasons are `replaced` and `resources_changed`. Pruning checks
 the offer sender's resources; it does not disclose recipient affordability.
+
+## Trade clocks and consideration
+
+`base-v8` adds timed offers and explicit consideration. `offer_trade` accepts
+optional `expires_in_ms` (1,000–300,000 ms, default 30,000). Every new offer carries
+`created_at_ms` and `expires_at_ms`; the deadline is capped by the current turn.
+Server ticks expire offers independently of turn timeout, with the same atomic
+state/outbox commit as other transitions. `trade_closed` reports `expired`, and
+acceptance at or after that instant fails. Browser-local checkpoints preserve the
+remaining lifetime while a table is closed. Replay retains versions 1 through 7
+without adding clocks to historical offers.
+
+Recipients send `think_trade { offer_id }` to add themselves to the offer's
+`thinking` list and emit `trade_thinking`. This is an explicit response, independent
+of their hand. An explicit `reject_trade` clears consideration, records the pass,
+and closes the offer once all recipients have declined. Private automatic filters
+do not appear as explicit responses.
+
+Counter-offers use `offer_trade` with reversed, edited bundles, addressed to the
+original sender. Off-turn players can offer only to the active player. Publication
+validates the sender's offered cards but never tests a recipient's resources or
+automatically passes on their behalf because of affordability. An unsuccessful
+acceptance cannot publish a rejection or change the offer. The UI keeps unaffordable
+incoming offers visible for consideration, passes, and counters; only acceptance
+uses the viewing player's own hand. AI runners include their configured waiting
+period in the offer lifetime.
+
+## Completed browser game exports
+
+`BrowserRoom.completed_history(subject)` returns the full durable record sequence
+from creation through the first victory event. It requires the seated local host
+and a finished game; agent seats and unfinished games cannot use this export.
+Later presence changes are excluded so reopening a result preserves its identity.
+The envelope includes the game ID, winner, schema version and
+`source: "local-unverified"`. Records retain their inputs, public events, engine
+version, sequence and state hash for replay and future research.
+
+The settlers.dev browser app exports its saved WASM checkpoint when the victory
+screen appears and sends it to its own completed-game archive. This export does
+not use the hosted game fleet or confer hosted karma. Browser checkpoint restore
+keeps the remaining turn and trade durations; closing the tab pauses local play.

@@ -330,6 +330,7 @@ pub fn proposals(
                 to: vec![partner],
                 give,
                 receive,
+                expires_in_ms: None,
                 message: None,
             },
             action,
@@ -664,6 +665,7 @@ pub fn responses(view: &GameView, k: &ResourceKnowledge, history: &[EventBatch])
                     to: vec![offer.from],
                     give,
                     receive,
+                    expires_in_ms: None,
                     message: Some(Communication {
                         intent: Intent::RequestTrade,
                         resources: Some(receive),

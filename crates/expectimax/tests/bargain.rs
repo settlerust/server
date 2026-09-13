@@ -97,6 +97,9 @@ fn a_thin_offer_draws_a_counter_priced_by_public_eagerness() {
             text: None,
         }),
         status: OfferStatus::Open,
+        thinking: vec![],
+        created_at_ms: None,
+        expires_at_ms: None,
         declined: vec![],
     };
     let view = named_view(&s, 0, vec![offer.clone()]);
@@ -148,6 +151,9 @@ fn decline_text_gives_reasons_later_in_the_game() {
         receive: Resources::one(Resource::Ore, 1),
         message: None,
         status: OfferStatus::Open,
+        thinking: vec![],
+        created_at_ms: None,
+        expires_at_ms: None,
         declined: vec![],
     };
     let view = named_view(&s, 0, vec![offer.clone()]);
@@ -188,6 +194,9 @@ fn the_search_answers_an_open_offer_with_words() {
         receive: Resources::one(Resource::Ore, 1),
         message: None,
         status: OfferStatus::Open,
+        thinking: vec![],
+        created_at_ms: None,
+        expires_at_ms: None,
         declined: vec![],
     };
     let view = named_view(&s, 0, vec![offer]);

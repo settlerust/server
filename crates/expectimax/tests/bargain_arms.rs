@@ -82,6 +82,9 @@ fn offer(id: &str, from: u8, to: u8, give: Resources, receive: Resources) -> Tra
         receive,
         message: None,
         status: OfferStatus::Open,
+        thinking: vec![],
+        created_at_ms: None,
+        expires_at_ms: None,
         declined: vec![],
     }
 }

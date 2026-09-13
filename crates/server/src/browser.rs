@@ -153,7 +153,7 @@ impl BrowserRoom {
             if self
                 .room
                 .as_ref()
-                .and_then(|r| r.deadline_ms)
+                .and_then(Room::next_deadline_ms)
                 .is_none_or(|d| d > now as u64)
             {
                 return Ok(false);
@@ -168,6 +168,51 @@ impl BrowserRoom {
     pub fn checkpoint(&self) -> std::result::Result<String, String> {
         wire(encode(self))
     }
+    /// Export the complete replay through victory to the local human host only.
+    /// This unverified research deposit never grants hosted reputation or game access.
+    pub fn completed_history(&self, subject: &str) -> std::result::Result<String, String> {
+        wire((|| {
+            let room = self.current()?;
+            if subject != room.host || room.seat(subject).is_none() {
+                return Err(Error::new(
+                    ErrorCode::Forbidden,
+                    "only the local host can export",
+                ));
+            }
+            let Some(settlers_engine::State {
+                phase: settlers_engine::Phase::Finished { winner },
+                ..
+            }) = &room.game
+            else {
+                return Err(Error::new(
+                    ErrorCode::InvalidRequest,
+                    "finish the game before exporting",
+                ));
+            };
+            // Ignore later presence changes so retries and reopened results have one identity.
+            let end = self
+                .records
+                .iter()
+                .position(|record| {
+                    record.public.iter().any(|event| {
+                        matches!(
+                            event,
+                            PublicEvent::Rule {
+                                event: settlers_engine::Event::Won { .. }
+                            }
+                        )
+                    })
+                })
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidRequest, "victory record is missing")
+                })?
+                + 1;
+            encode(&serde_json::json!({
+                "schema": 1, "source": "local-unverified", "game_id": room.id,
+                "winner": winner, "records": &self.records[..end],
+            }))
+        })())
+    }
     /// Resume the saved turn with its remaining duration; closed tabs do not run clocks.
     pub fn restore(
         checkpoint: &str,
@@ -181,6 +226,18 @@ impl BrowserRoom {
                 room.deadline_ms = room.deadline_ms.map(|d| d.saturating_add(elapsed));
                 if let Some(discard) = &mut room.discard {
                     discard.deadline_ms = discard.deadline_ms.saturating_add(elapsed);
+                }
+                for offer in &mut room.offers {
+                    if offer.public.status == settlers_protocol::OfferStatus::Open {
+                        offer.public.created_at_ms = offer
+                            .public
+                            .created_at_ms
+                            .map(|d| d.saturating_add(elapsed));
+                        offer.public.expires_at_ms = offer
+                            .public
+                            .expires_at_ms
+                            .map(|d| d.saturating_add(elapsed));
+                    }
                 }
                 for member in &mut room.members {
                     member.connected = false;

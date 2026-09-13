@@ -186,7 +186,7 @@ async fn expire(
     events: &broadcast::Sender<Arc<Record>>,
     now: u64,
 ) -> Result<()> {
-    if room.deadline_ms.is_some_and(|d| d <= now) {
+    if room.next_deadline_ms().is_some_and(|d| d <= now) {
         commit(room, store, events, Input::Timeout, now).await?;
     }
     Ok(())

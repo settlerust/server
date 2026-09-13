@@ -49,6 +49,10 @@ pub enum PublicEvent {
         offer_id: String,
         player: u8,
     },
+    TradeThinking {
+        offer_id: String,
+        player: u8,
+    },
     Message {
         from: u8,
         to: Option<Vec<u8>>,
@@ -64,6 +68,7 @@ pub enum TradeCloseReason {
     TurnEnded,
     Replaced,
     ResourcesChanged,
+    Expired,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EventPage {
