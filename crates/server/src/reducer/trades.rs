@@ -222,6 +222,7 @@ pub(super) fn reject(
         return Err(unavailable());
     }
     offer.rejected |= 1 << p;
+    offer.public.thinking.retain(|player| *player != p);
     events.push(PublicEvent::TradeRejected {
         offer_id: id.into(),
         player: p,
@@ -255,6 +256,46 @@ pub(super) fn cancel(
         winner: None,
     });
     Ok(())
+}
+pub(super) fn think(room: &mut Room, p: u8, id: &str, events: &mut Vec<PublicEvent>) -> Result<()> {
+    let offer = room
+        .offers
+        .iter_mut()
+        .find(|o| o.public.id == id)
+        .ok_or_else(unavailable)?;
+    if !offer.public.to.contains(&p)
+        || offer.public.status != OfferStatus::Open
+        || offer.rejected & (1 << p) != 0
+        || room.filters[p as usize][offer.public.from as usize].auto_reject_trades
+    {
+        return Err(unavailable());
+    }
+    if !offer.public.thinking.contains(&p) {
+        offer.public.thinking.push(p);
+        events.push(PublicEvent::TradeThinking {
+            offer_id: id.into(),
+            player: p,
+        });
+    }
+    Ok(())
+}
+/// Offer clocks expire independently of the turn and never inspect a recipient's hand.
+pub(super) fn expire_due(room: &mut Room, now: u64, events: &mut Vec<PublicEvent>) {
+    for offer in &mut room.offers {
+        if offer.public.status == OfferStatus::Open
+            && offer
+                .public
+                .expires_at_ms
+                .is_some_and(|deadline| deadline <= now)
+        {
+            offer.public.status = OfferStatus::Expired;
+            events.push(PublicEvent::TradeClosed {
+                offer_id: offer.public.id.clone(),
+                reason: TradeCloseReason::Expired,
+                winner: None,
+            });
+        }
+    }
 }
 pub(super) fn expire(room: &mut Room, events: &mut Vec<PublicEvent>) {
     for offer in &mut room.offers {

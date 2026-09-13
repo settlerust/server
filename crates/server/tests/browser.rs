@@ -85,6 +85,7 @@ fn browser_commands_preserve_redaction_concurrency_and_durable_receipts() {
 #[test]
 fn browser_adapter_finishes_a_ten_point_game_and_paginates_history() {
     let mut room = started();
+    assert!(room.completed_history("p0").is_err());
     let mut policies = [FastBuilder, FastBuilder, FastBuilder, FastBuilder];
     for _ in 0..10000 {
         if matches!(
@@ -109,6 +110,23 @@ fn browser_adapter_finishes_a_ten_point_game_and_paginates_history() {
         finished.game.unwrap().phase,
         settlers_engine::Phase::Finished { .. }
     ));
+    assert!(room.completed_history("p1").is_err());
+    assert!(room.completed_history("outsider").is_err());
+    let exported = room.completed_history("p0").unwrap();
+    let history: serde_json::Value = serde_json::from_str(&exported).unwrap();
+    assert_eq!(history["source"], "local-unverified");
+    assert_eq!(
+        history["records"].as_array().unwrap().len(),
+        finished.version as usize
+    );
+    assert_eq!(history["records"][0]["input"]["type"], "create");
+    assert!(
+        history["records"].as_array().unwrap().last().unwrap()["public"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["event"]["type"] == "won")
+    );
     let mut cursor = 0;
     while cursor < finished.version {
         let page: EventPage =
@@ -119,6 +137,8 @@ fn browser_adapter_finishes_a_ten_point_game_and_paginates_history() {
         assert_eq!(page.current_version, finished.version);
         cursor = page.next_after;
     }
+    room.presence("p0".into(), false, 2000.0).unwrap();
+    assert_eq!(room.completed_history("p0").unwrap(), exported);
 }
 #[test]
 fn browser_timeout_uses_the_official_reducer() {

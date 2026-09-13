@@ -769,6 +769,7 @@ pub fn analyze_with(
                             to: vec![partner],
                             give,
                             receive,
+                            expires_in_ms: None,
                             message: Some(settlers_protocol::Communication {
                                 intent: settlers_protocol::Intent::RequestTrade,
                                 resources: Some(receive),
@@ -980,6 +981,7 @@ pub fn analyze_with(
                         to: to.clone(),
                         give,
                         receive,
+                        expires_in_ms: None,
                         message: Some(settlers_protocol::Communication {
                             intent: settlers_protocol::Intent::RequestTrade,
                             resources: Some(receive),

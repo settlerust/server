@@ -11,6 +11,7 @@ async fn simultaneous_acceptances_commit_first_and_decline_second_with_winner() 
                 to: vec![1, 2],
                 give: Resources([1, 0, 0, 0, 0]),
                 receive: Resources([0, 1, 0, 0, 0]),
+                expires_in_ms: None,
                 message: Some(Communication {
                     intent: Intent::BuildRoad,
                     resources: None,
@@ -50,6 +51,7 @@ async fn resource_changes_invalidate_unfunded_offers_atomically() {
             to: vec![1, 2],
             give: Resources([2, 0, 0, 0, 0]),
             receive: Resources([0, 1, 0, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )
@@ -61,6 +63,7 @@ async fn resource_changes_invalidate_unfunded_offers_atomically() {
             to: vec![1, 2],
             give: Resources([2, 0, 0, 0, 0]),
             receive: Resources([0, 1, 0, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )
@@ -115,6 +118,7 @@ async fn shadow_mute_is_private_and_filters_live_and_history_messages() {
             to: vec![1, 2],
             give: Resources([1, 0, 0, 0, 0]),
             receive: Resources([0, 1, 0, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )

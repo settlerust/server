@@ -636,6 +636,15 @@
         {
           "type": "object",
           "properties": {
+            "expires_in_ms": {
+              "description": "Offer lifetime in milliseconds (1,000–300,000); defaults to 30 seconds.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
             "give": {
               "$ref": "#/$defs/Resources"
             },
@@ -701,6 +710,23 @@
             "type": {
               "type": "string",
               "const": "reject_trade"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "offer_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "think_trade"
             }
           },
           "additionalProperties": false,
@@ -2620,6 +2646,29 @@
         {
           "type": "object",
           "properties": {
+            "offer_id": {
+              "type": "string"
+            },
+            "player": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "trade_thinking"
+            }
+          },
+          "required": [
+            "type",
+            "offer_id",
+            "player"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "from": {
               "type": "integer",
               "format": "uint8",
@@ -3140,12 +3189,21 @@
         "cancelled",
         "turn_ended",
         "replaced",
-        "resources_changed"
+        "resources_changed",
+        "expired"
       ]
     },
     "TradeOffer": {
       "type": "object",
       "properties": {
+        "created_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "declined": {
           "description": "Explicit passes only; private automatic filtering is never disclosed.",
           "type": "array",
@@ -3155,6 +3213,14 @@
             "maximum": 255,
             "minimum": 0
           }
+        },
+        "expires_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
         "from": {
           "type": "integer",
@@ -3183,6 +3249,16 @@
         },
         "status": {
           "$ref": "#/$defs/OfferStatus"
+        },
+        "thinking": {
+          "description": "Explicit consideration only; independent of resource holdings.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0
+          }
         },
         "to": {
           "type": "array",

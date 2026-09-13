@@ -13,6 +13,7 @@ async fn explicit_passes_survive_restore_and_the_last_pass_closes_the_offer() {
             to: vec![1, 2],
             give: Resources([1, 0, 0, 0, 0]),
             receive: Resources([0, 1, 0, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )
@@ -125,6 +126,7 @@ async fn automatic_filters_do_not_disclose_private_preferences() {
             to: vec![1, 2],
             give: Resources([1, 0, 0, 0, 0]),
             receive: Resources([0, 1, 0, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )
@@ -153,6 +155,7 @@ async fn automatic_filters_do_not_disclose_private_preferences() {
             to: vec![1],
             give: Resources([1, 0, 0, 0, 0]),
             receive: Resources([0, 1, 0, 0, 0]),
+            expires_in_ms: None,
             message: None,
         },
     )
@@ -205,12 +208,20 @@ async fn archived_declines_replay_with_their_original_transition_version() {
             to: to.clone(),
             give,
             receive,
+            expires_in_ms: None,
             message: None,
         },
     )
     .await;
     let offer_id = h.room().await.offers.last().unwrap().public.id.clone();
     let mut legacy_hashes = std::collections::BTreeMap::new();
+    let mut legacy_offer = h.room().await;
+    legacy_offer.offers.last_mut().unwrap().public.created_at_ms = None;
+    legacy_offer.offers.last_mut().unwrap().public.expires_at_ms = None;
+    legacy_hashes.insert(
+        legacy_offer.version,
+        reducer::state_hash(&legacy_offer).unwrap(),
+    );
     for recipient in to {
         h.command(
             recipient,
@@ -221,6 +232,8 @@ async fn archived_declines_replay_with_their_original_transition_version() {
         .await;
         let mut legacy = h.room().await;
         let offer = legacy.offers.last_mut().unwrap();
+        offer.public.created_at_ms = None;
+        offer.public.expires_at_ms = None;
         offer.public.declined.clear();
         offer.public.status = OfferStatus::Open;
         legacy_hashes.insert(legacy.version, reducer::state_hash(&legacy).unwrap());
@@ -236,6 +249,12 @@ async fn archived_declines_replay_with_their_original_transition_version() {
         .into_iter()
         .map(|mut record| {
             record.engine_version = "base-v5".into();
+            for event in &mut record.public {
+                if let PublicEvent::TradeOffered { offer } = event {
+                    offer.created_at_ms = None;
+                    offer.expires_at_ms = None;
+                }
+            }
             if let Some(hash) = legacy_hashes.get(&record.sequence) {
                 record.state_hash.clone_from(hash);
                 record.public.retain(|event| {

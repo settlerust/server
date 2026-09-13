@@ -653,6 +653,7 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                 to,
                 give,
                 receive,
+                expires_in_ms,
                 message,
             }) => {
                 let o = view.game.as_ref().ok_or("missing observation")?;
@@ -679,6 +680,9 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                     receive,
                     message: message.clone(),
                     status: OfferStatus::Open,
+                    thinking: vec![],
+                    created_at_ms: None,
+                    expires_at_ms: None,
                     declined: vec![],
                 };
                 t.publish(
@@ -692,6 +696,7 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                         to,
                         give,
                         receive,
+                        expires_in_ms,
                         message,
                     },
                     &view,
@@ -769,6 +774,7 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                             give: counter_give,
                             receive: counter_receive,
                             message: counter_message,
+                            ..
                         }) if *counter_to == vec![p] => {
                             // A counter: the recipient proposes other terms to the offerer.
                             let funded = t.state.players[ri].resources.contains(*counter_give);
@@ -790,6 +796,9 @@ pub fn play(mut seats: Vec<Box<dyn Seat>>, table: TableSettings) -> Result<GameR
                                 receive: *counter_receive,
                                 message: counter_message.clone(),
                                 status: OfferStatus::Open,
+                                thinking: vec![],
+                                created_at_ms: None,
+                                expires_at_ms: None,
                                 declined: vec![],
                             };
                             t.publish(

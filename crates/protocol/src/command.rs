@@ -112,6 +112,9 @@ pub enum Command {
         to: Vec<u8>,
         give: Resources,
         receive: Resources,
+        /// Offer lifetime in milliseconds (1,000–300,000); defaults to 30 seconds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_in_ms: Option<u32>,
         #[serde(default)]
         message: Option<Communication>,
     },
@@ -119,6 +122,9 @@ pub enum Command {
         offer_id: String,
     },
     RejectTrade {
+        offer_id: String,
+    },
+    ThinkTrade {
         offer_id: String,
     },
     CancelTrade {

@@ -31,6 +31,13 @@ pub struct TradeOffer {
     /// Explicit passes only; private automatic filtering is never disclosed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub declined: Vec<u8>,
+    /// Explicit consideration only; independent of resource holdings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub thinking: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<u64>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GameView {

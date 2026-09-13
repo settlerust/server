@@ -51,6 +51,18 @@ pub struct Room {
     pub chat_count: [u8; 4],
 }
 impl Room {
+    /// Earliest authoritative clock, including offers while the turn remains open.
+    pub fn next_deadline_ms(&self) -> Option<u64> {
+        self.deadline_ms
+            .into_iter()
+            .chain(
+                self.offers
+                    .iter()
+                    .filter(|offer| offer.public.status == OfferStatus::Open)
+                    .filter_map(|offer| offer.public.expires_at_ms),
+            )
+            .min()
+    }
     pub fn member(&self, subject: &str) -> Option<&Member> {
         self.members.iter().find(|m| m.identity.subject == subject)
     }
