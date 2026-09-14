@@ -131,6 +131,7 @@ pub struct DiscardRound {
     pub required: [u16; 4],
     pub locked: [Resources; 4],
     pub drafts: [Resources; 4],
+    /// Zero denotes an untimed discard round.
     pub deadline_ms: u64,
     pub turn_remaining_ms: u64,
 }

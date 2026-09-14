@@ -418,7 +418,7 @@ fn update_deadline(old: &Room, new: &mut Room, now: u64) {
     let Some(game) = new.game else {
         return;
     };
-    if matches!(game.phase, Phase::Finished { .. }) {
+    if new.settings.turn_seconds == 0 || matches!(game.phase, Phase::Finished { .. }) {
         new.deadline_ms = None;
         return;
     }

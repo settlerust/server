@@ -222,7 +222,7 @@ reproducible bit for bit.
 | `node_budget` | 400000 | Engine transitions per analysis |
 | `samples` | 4 | Sampled hidden worlds (1–32) |
 | `scenarios` | 8 | Common random scenarios after the current turn (1–64) |
-| `inner_scenarios` | 4 | Scenarios at deeper levels |
+| `inner_scenarios` | 4 | Scenarios at deeper levels. No deeper round exists at depth 2, so the setting cannot bind there (measured: swapped-pair halves replay identical games at depth 2; it first affects decisions at depth 3) |
 | `beam` | 4 | Reserved; later steps of the current turn keep three, two, then one action |
 | `afterstates` | 96 | Reserved cap on end-of-turn positions per planned turn |
 | `iterative` | true | Iterative deepening; false searches only `depth` |

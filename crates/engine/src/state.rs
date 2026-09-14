@@ -81,6 +81,7 @@ pub struct Settings {
     pub players: u8,
     pub points_to_win: u8,
     pub discard_limit: u8,
+    /// Seconds per turn, or zero for unlimited turns and discards.
     pub turn_seconds: u32,
     /// Deterministic mode: the k-th roll, k-th theft, and k-th development draw come from
     /// seed-derived tapes indexed by count, so different policies on one seed face the same
@@ -104,7 +105,7 @@ impl Settings {
         if !(2..=4).contains(&self.players)
             || !(3..=20).contains(&self.points_to_win)
             || self.discard_limit > 95
-            || !(1..=86400).contains(&self.turn_seconds)
+            || self.turn_seconds > 86400
         {
             return Err(RuleError::InvalidSettings);
         }

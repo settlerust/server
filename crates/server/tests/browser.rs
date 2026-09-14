@@ -22,9 +22,12 @@ fn command(room: &mut BrowserRoom, seat: u8, command: Command) {
     room.command(&identity(seat), &request, 1000.0).unwrap();
 }
 fn started() -> BrowserRoom {
+    started_with_seconds(120)
+}
+fn started_with_seconds(seconds: u32) -> BrowserRoom {
     let mut room = BrowserRoom::new();
     room.create("local-test".into(), &serde_json::json!({ "name": "Browser test", "host_as_player": true,
-        "settings": { "players": 4, "points_to_win": 10, "discard_limit": 7, "turn_seconds": 120 }
+        "settings": { "players": 4, "points_to_win": 10, "discard_limit": 7, "turn_seconds": seconds }
     }).to_string(), &identity(0), &[11; 32], 1000.0).unwrap();
     for p in 1..4 {
         command(
@@ -42,6 +45,36 @@ fn started() -> BrowserRoom {
     command(&mut room, 0, Command::RollForOrder);
     command(&mut room, 0, Command::Start);
     room
+}
+#[test]
+fn custom_turn_limits_and_unlimited_games_survive_presence_and_restore() {
+    for seconds in [0, 95] {
+        let mut room = started_with_seconds(seconds);
+        let before = view(&room, 0);
+        let current = before.game.as_ref().unwrap().current;
+        assert_eq!(before.settings.turn_seconds, seconds);
+        assert_eq!(
+            before.deadline_ms,
+            (seconds > 0).then_some(1000 + u64::from(seconds) * 1000)
+        );
+        room.presence(format!("p{current}"), false, 2000.0).unwrap();
+        let checkpoint = room.checkpoint().unwrap();
+        room = BrowserRoom::restore(&checkpoint, 2000.0, 50_000.0).unwrap();
+        if seconds == 0 {
+            assert_eq!(view(&room, 0).deadline_ms, None);
+            let version = view(&room, 0).version;
+            assert!(!room.tick(86_400_000.0).unwrap());
+            assert_eq!(view(&room, 0).version, version);
+            let action = view(&room, current).game.unwrap().legal_actions[0];
+            command(&mut room, current, Command::Act { action });
+            assert_eq!(view(&room, 0).deadline_ms, None);
+        } else {
+            assert_eq!(
+                view(&room, 0).deadline_ms,
+                Some(50_000 + u64::from(seconds) * 1000)
+            );
+        }
+    }
 }
 #[test]
 fn browser_commands_preserve_redaction_concurrency_and_durable_receipts() {

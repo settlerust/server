@@ -920,6 +920,7 @@
       "type": "object",
       "properties": {
         "deadline_ms": {
+          "description": "Zero denotes an untimed discard round.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
@@ -3007,6 +3008,7 @@
           "minimum": 0
         },
         "turn_seconds": {
+          "description": "Seconds per turn, or zero for unlimited turns and discards.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0
