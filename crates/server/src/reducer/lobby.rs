@@ -269,6 +269,7 @@ pub(super) fn presence(
             _ => 8 + game.turn,
         };
         if must_act
+            && room.settings.turn_seconds > 0
             && member.grace_turn != Some(grace_key)
             && !matches!(game.phase, Phase::Finished { .. })
         {

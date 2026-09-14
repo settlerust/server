@@ -3,6 +3,7 @@ use crate::{Config, analyze};
 use serde::Deserialize;
 use settlers_protocol::{EventBatch, GameView};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
 /// One independent instance per seated worker. Out-of-order/replayed event batches are safe.
@@ -12,6 +13,7 @@ pub struct ExpectimaxPlayer {
     history: BTreeMap<u64, EventBatch>,
     offered_turn: Option<u32>,
     cache: Cache,
+    tables: Option<(String, Arc<crate::ntuple::Model>)>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,13 +73,30 @@ impl ExpectimaxPlayer {
     pub fn offered(&mut self, turn: u32) {
         self.offered_turn = Some(turn);
     }
+    /// Install frozen tables fetched by the worker. The identifier must match `leaf.tables`.
+    pub fn load_tables(&mut self, id: &str, bytes: &[u8]) -> Result<(), String> {
+        let model = crate::ntuple::Model::read_from(&mut std::io::Cursor::new(bytes), false)?;
+        self.tables = Some((id.to_owned(), Arc::new(model)));
+        self.cache = Cache::default();
+        Ok(())
+    }
     pub fn analyze(&mut self, json: &str) -> Result<String, String> {
         let request: Request = serde_json::from_str(json).map_err(|e| e.to_string())?;
         let history: Vec<_> = self.history.values().cloned().collect();
         let report = match &request.search {
             Some(search) => {
                 let started = now_ms();
-                let leaf = Leaf::from_config(search).map_err(|e| e.to_string())?;
+                let leaf = match &search.leaf.tables {
+                    Some(id) => {
+                        let (_, model) = self
+                            .tables
+                            .as_ref()
+                            .filter(|(loaded, _)| loaded == id)
+                            .ok_or_else(|| format!("Learned tables {id} have not been loaded"))?;
+                        Leaf::tables(Arc::clone(model), search.leaf.scale, search.leaf.hand)
+                    }
+                    None => Leaf::Hand,
+                };
                 crate::v2::analyze_with(
                     &request.view,
                     &history,

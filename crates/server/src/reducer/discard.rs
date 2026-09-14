@@ -31,14 +31,22 @@ pub(super) fn update(old: &Room, room: &mut Room, now: u64) {
                 }),
                 locked: [Resources::default(); 4],
                 drafts: [Resources::default(); 4],
-                deadline_ms: now + duration,
+                deadline_ms: if room.settings.turn_seconds == 0 {
+                    0
+                } else {
+                    now + duration
+                },
                 turn_remaining_ms: old.deadline_ms.unwrap_or(now).saturating_sub(now),
             });
         }
         // Presence, other seats' choices, and confirmations cannot extend this deadline.
-        room.deadline_ms = room.discard.as_ref().map(|d| d.deadline_ms);
+        room.deadline_ms = room
+            .discard
+            .as_ref()
+            .and_then(|d| (d.deadline_ms > 0).then_some(d.deadline_ms));
     } else if let Some(round) = room.discard.take() {
-        room.deadline_ms = Some(now + round.turn_remaining_ms);
+        room.deadline_ms =
+            (room.settings.turn_seconds > 0).then_some(now + round.turn_remaining_ms);
     }
 }
 fn check(room: &Room, p: u8, id: u64, now: u64) -> Result<&DiscardRound> {
@@ -46,7 +54,7 @@ fn check(room: &Room, p: u8, id: u64, now: u64) -> Result<&DiscardRound> {
         .discard
         .as_ref()
         .ok_or_else(|| invalid("no discard round is active"))?;
-    if id != round.id || now >= round.deadline_ms {
+    if id != round.id || (round.deadline_ms > 0 && now >= round.deadline_ms) {
         return Err(invalid("discard round has ended"));
     }
     if !room

@@ -89,6 +89,12 @@ The `remote` binary wraps its selected builder policy with a trade proposer. It 
 
 ## Timed, staged discards
 
+`Settings.turn_seconds` accepts 0 for unlimited turns, or 1–86400 seconds for
+timed play. Untimed games keep `GameView.deadline_ms` null through setup, turns,
+presence changes, discards, and restoration. An untimed `DiscardView` uses
+`deadline_ms: 0`; clients must keep its controls enabled and omit its countdown.
+Trade offers may still have their own explicit expiry independently of the turn.
+
 Staged discards introduced archive engine version `base-v2`; current transitions use `base-v8`. Replay retains the `base-v1` deadline and timeout behavior for older records. A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
 
 The owning `GameView.discard` contains the round `id`, fixed `required` count, editable `draft`, confirmed `locked` cards, and `deadline_ms`. It is absent for spectators and only contains the recipient's choices. Send `select_discard { discard_id, resources }` to replace the draft, then `confirm_discard { discard_id }` to lock it. Multiple confirmations may fill the quota. These commands tolerate other seats advancing the room version but require the exact active round ID. Receipts remain idempotent. Confirmed cards cannot be removed, and the engine applies one exact discard when the quota is complete. The legacy `act/discard` command still works for agents; it must include previously locked cards.

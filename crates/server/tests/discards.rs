@@ -38,6 +38,53 @@ async fn seven(seconds: u32) -> Room {
     panic!("fixture must find a seven");
 }
 #[tokio::test]
+async fn unlimited_discards_remain_editable_after_long_delays_and_never_restart_a_clock() {
+    let mut room = seven(0).await;
+    let id = room.discard.as_ref().unwrap().id;
+    assert_eq!(room.deadline_ms, None);
+    assert_eq!(room.discard.as_ref().unwrap().deadline_ms, 0);
+    let checkpoint = serde_json::json!({ "room": room, "records": [] }).to_string();
+    let restored =
+        server::browser::BrowserRoom::restore(&checkpoint, 1000.0, 86_400_000.0).unwrap();
+    let projection: GameView = serde_json::from_str(&restored.view("player-0").unwrap()).unwrap();
+    assert_eq!(projection.deadline_ms, None);
+    assert_eq!(projection.discard.unwrap().deadline_ms, 0);
+    assert!(reducer::reduce(&room, Input::Timeout, 86_400_000).is_err());
+    for p in 0..room.settings.players {
+        let view = reducer::view(&room, &format!("player-{p}")).unwrap();
+        let Some(discard) = view.discard else {
+            continue;
+        };
+        let mut remaining = discard.required;
+        let hand = view.game.unwrap().own.unwrap().resources;
+        let mut resources = Resources::default();
+        for (have, selected) in hand.0.iter().zip(&mut resources.0) {
+            *selected = u16::from(*have).min(remaining) as u8;
+            remaining -= u16::from(*selected);
+        }
+        room = command(
+            &room,
+            p,
+            Command::SelectDiscard {
+                discard_id: id,
+                resources,
+            },
+            86_400_000,
+        )
+        .0;
+        room = command(
+            &room,
+            p,
+            Command::ConfirmDiscard { discard_id: id },
+            86_400_001,
+        )
+        .0;
+    }
+    assert!(matches!(room.game.unwrap().phase, Phase::Robber { .. }));
+    assert!(room.discard.is_none());
+    assert_eq!(room.deadline_ms, None);
+}
+#[tokio::test]
 async fn choices_are_private_editable_then_locked_in_stages_without_extending_the_deadline() {
     let mut room = seven(120).await;
     let id = room.discard.as_ref().unwrap().id;

@@ -125,5 +125,6 @@ pub struct DiscardView {
     pub required: u16,
     pub locked: Resources,
     pub draft: Resources,
+    /// Zero denotes an untimed discard round.
     pub deadline_ms: u64,
 }

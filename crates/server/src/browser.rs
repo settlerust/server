@@ -224,7 +224,9 @@ impl BrowserRoom {
             if let Some(room) = &mut saved.room {
                 let elapsed = (now as u64).saturating_sub(paused_at as u64);
                 room.deadline_ms = room.deadline_ms.map(|d| d.saturating_add(elapsed));
-                if let Some(discard) = &mut room.discard {
+                if let Some(discard) = &mut room.discard
+                    && discard.deadline_ms > 0
+                {
                     discard.deadline_ms = discard.deadline_ms.saturating_add(elapsed);
                 }
                 for offer in &mut room.offers {
