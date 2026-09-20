@@ -32,5 +32,6 @@ lcov.info
 *.p12
 *.pfx
 !crates/server/tests/fixtures/jwt-test-private.pem
+!crates/server/tests/fixtures/jwt-test-public.pem
 .DS_Store
 runs/

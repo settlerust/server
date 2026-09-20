@@ -1,5 +1,6 @@
 mod actor;
 mod archive;
+mod expert;
 use crate::{
     auth::Identity,
     error::{Error, Result},
@@ -258,6 +259,27 @@ impl GameService {
         )?;
         receive.await.map_err(|_| closed())?
     }
+    /// Apply only a newer server-signed display name, durably and before broadcast.
+    pub async fn display_name(
+        &self,
+        id: &str,
+        identity: Identity,
+        revision: u64,
+        now: u64,
+    ) -> Result<()> {
+        let handle = self.handle(id).await?;
+        let (reply, receive) = oneshot::channel();
+        enqueue(
+            &handle,
+            Request::DisplayName {
+                identity,
+                revision,
+                now,
+                reply,
+            },
+        )?;
+        receive.await.map_err(|_| closed())?
+    }
     pub async fn room(&self, id: &str) -> Result<Room> {
         let handle = self.handle(id).await?;
         let (reply, receive) = oneshot::channel();
@@ -323,6 +345,28 @@ impl GameService {
                 subject,
                 session,
                 connected,
+                now,
+                reply,
+            },
+        )?;
+        receive.await.map_err(|_| closed())?
+    }
+    pub async fn activity(
+        &self,
+        id: &str,
+        subject: String,
+        session: String,
+        idle: bool,
+        now: u64,
+    ) -> Result<()> {
+        let handle = self.handle(id).await?;
+        let (reply, receive) = oneshot::channel();
+        enqueue(
+            &handle,
+            Request::Activity {
+                subject,
+                session,
+                idle,
                 now,
                 reply,
             },

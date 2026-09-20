@@ -31,6 +31,9 @@ fn execute(
     emit: &mut impl FnMut(Event),
 ) -> Result<State, RuleError> {
     input.player(p)?;
+    if input.is_retired(p) {
+        return Err(RuleError::InvalidPlayer);
+    }
     if matches!(input.phase, Phase::Finished { .. }) {
         return Err(RuleError::GameFinished);
     }
@@ -74,6 +77,7 @@ fn execute(
         } => crate::economy::trade(&mut s, p, other, give, receive, emit)?,
         Action::EndTurn => end_turn(&mut s, emit)?,
     }
+    crate::retirement::skip_setup(&mut s, emit);
     crate::scoring::update_awards(
         &mut s,
         matches!(
@@ -248,7 +252,7 @@ fn end_turn(s: &mut State, emit: &mut impl FnMut(Event)) -> Result<(), RuleError
         player.development[i] += player.new_development[i];
         player.new_development[i] = 0;
     }
-    s.current = (s.current + 1) % s.settings.players;
+    s.current = s.next_player(s.current);
     s.turn += 1;
     s.played_development = false;
     s.phase = Phase::Roll;

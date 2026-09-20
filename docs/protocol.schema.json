@@ -420,6 +420,24 @@
     "ClientFrame": {
       "oneOf": [
         {
+          "description": "Self-reported activity; never used as evidence of a disconnection.",
+          "type": "object",
+          "properties": {
+            "idle": {
+              "type": "boolean"
+            },
+            "type": {
+              "type": "string",
+              "const": "activity"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "idle"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "request": {
@@ -470,6 +488,36 @@
     },
     "Command": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "disconnected_at_ms": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "resolution": {
+              "$ref": "#/$defs/DisconnectResolution"
+            },
+            "seat": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "resolve_disconnect"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "seat",
+            "disconnected_at_ms",
+            "resolution"
+          ]
+        },
         {
           "description": "Explicitly enroll an agent; required for player seats in research tables.",
           "type": "object",
@@ -949,6 +997,13 @@
         "locked",
         "draft",
         "deadline_ms"
+      ]
+    },
+    "DisconnectResolution": {
+      "type": "string",
+      "enum": [
+        "retire",
+        "expert"
       ]
     },
     "ErrorCode": {
@@ -1829,6 +1884,17 @@
         "connected": {
           "type": "boolean"
         },
+        "disconnected_at_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "idle": {
+          "type": "boolean"
+        },
         "is_you": {
           "type": "boolean"
         },
@@ -1838,6 +1904,16 @@
         "ready": {
           "type": "boolean",
           "default": false
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DisconnectResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "seat": {
           "type": [
@@ -1958,6 +2034,12 @@
           },
           "maxItems": 9,
           "minItems": 9
+        },
+        "retired": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
         },
         "roads": {
           "type": "array",
@@ -2384,6 +2466,54 @@
     },
     "PublicEvent": {
       "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "idle": {
+              "type": "boolean"
+            },
+            "seat": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "activity"
+            }
+          },
+          "required": [
+            "type",
+            "idle"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "resolution": {
+              "$ref": "#/$defs/DisconnectResolution"
+            },
+            "seat": {
+              "type": "integer",
+              "format": "uint8",
+              "maximum": 255,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "disconnect_resolved"
+            }
+          },
+          "required": [
+            "type",
+            "seat",
+            "resolution"
+          ]
+        },
         {
           "type": "object",
           "properties": {

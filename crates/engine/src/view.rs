@@ -19,6 +19,8 @@ pub struct PublicPlayer {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Observation {
+    #[serde(default, skip_serializing_if = "crate::state::is_zero")]
+    pub retired: u8,
     pub settings: Settings,
     pub buildings: Vec<u8>,
     pub roads: Vec<Option<u8>>,
@@ -44,6 +46,7 @@ pub struct Observation {
 pub fn observe(s: &State, seat: Option<u8>) -> Observation {
     let seat = seat.filter(|&p| p < s.settings.players);
     Observation {
+        retired: s.retired,
         settings: s.settings,
         buildings: (0..54).map(|v| s.board.building(v)).collect(),
         roads: (0..72).map(|e| s.board.road(e)).collect(),

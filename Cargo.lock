@@ -2698,6 +2698,7 @@ dependencies = [
  "serde_json",
  "settlers-client",
  "settlers-engine",
+ "settlers-expectimax",
  "settlers-policies",
  "settlers-protocol",
  "sha2 0.10.9",

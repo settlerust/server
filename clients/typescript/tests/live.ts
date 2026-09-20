@@ -7,16 +7,30 @@ const peer = await SettlersClient.guest(base, 'TypeScript peer');
 let game = await host.create({name: 'TypeScript protocol smoke', host_as_player: true,
   settings: {players: 2, points_to_win: 10, discard_limit: 7, turn_seconds: 120}});
 await peer.submit(game.id, peer.prepare(game.version, {type: 'join', name: 'TypeScript peer', spectator: false}));
-game = await host.game(game.id);
-const request = host.prepare(game.version, {type: 'start'});
-const receipt = await host.submit(game.id, request);
-assert.equal((await host.submit(game.id, request)).duplicate, true);
-await host.refresh();
-let stop: (() => void) | undefined;
+const stops: (() => void)[] = [];
 try {
+  // The real server requires both a live WebSocket and explicit player consent.
+  await Promise.all([host, peer].map(client => new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Player presence timed out')), 10_000);
+    stops.push(client.connect(game.id, frame => {
+      if (frame.type === 'snapshot' && frame.game.members.filter(member => member.seat != null).every(member => member.connected)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    }, error => { clearTimeout(timer); reject(error); }));
+  })));
+  for (const client of [host, peer]) {
+    const current = await client.game(game.id);
+    await client.submit(game.id, client.prepare(current.version, {type: 'set_ready', ready: true}));
+  }
+  game = await host.game(game.id);
+  const request = host.prepare(game.version, {type: 'start'});
+  const receipt = await host.submit(game.id, request);
+  assert.equal((await host.submit(game.id, request)).duplicate, true);
+  await host.refresh();
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('WebSocket snapshot timed out')), 10_000);
-    stop = host.connect(game.id, frame => {
+    stops.push(host.connect(game.id, frame => {
       if (frame.type === 'snapshot' && frame.game.game) {
         try {
           assert.equal(frame.protocol, 1);
@@ -26,9 +40,9 @@ try {
           resolve();
         } catch (error) { clearTimeout(timer); reject(error); }
       }
-    }, error => { clearTimeout(timer); reject(error); });
+    }, error => { clearTimeout(timer); reject(error); }));
   });
-} finally { stop?.(); }
-const history = await host.history(game.id);
-assert.ok(history.next_after >= receipt.version);
-console.log(JSON.stringify({game_id: game.id, typescript_rest_and_websocket: 'passed'}));
+  const history = await host.history(game.id);
+  assert.ok(history.next_after >= receipt.version);
+  console.log(JSON.stringify({game_id: game.id, typescript_rest_and_websocket: 'passed'}));
+} finally { for (const stop of stops) stop(); }

@@ -85,7 +85,16 @@ async fn run(
             .await;
         return;
     }
-    let result = stream(&mut socket, &app, &id, &identity, &bearer, &mut receiver).await;
+    let result = stream(
+        &mut socket,
+        &app,
+        &id,
+        &identity,
+        &bearer,
+        &session,
+        &mut receiver,
+    )
+    .await;
     if let Err(error) = result {
         tracing::debug!(code=?error.0.code,game_id=%id,"socket ended");
     }
@@ -100,6 +109,7 @@ async fn stream(
     id: &str,
     identity: &Identity,
     bearer: &Bearer,
+    session: &str,
     receiver: &mut broadcast::Receiver<std::sync::Arc<crate::model::Record>>,
 ) -> Result<()> {
     let mut event_cursor = snapshot(socket, app, id, &identity.subject).await?;
@@ -121,7 +131,7 @@ async fn stream(
                 app.auth.verify(&bearer.0, now_ms() / 1000)?;
                 match message {
                     Message::Text(text) => {
-                        if let Some(version) = handle_text(socket, app, id, identity, bearer, &text).await? {
+                        if let Some(version) = handle_text(socket, app, id, identity, bearer, session, &text).await? {
                             event_cursor = version;
                         }
                     }
@@ -172,6 +182,7 @@ async fn handle_text(
     id: &str,
     identity: &Identity,
     bearer: &Bearer,
+    session: &str,
     text: &str,
 ) -> Result<Option<u64>> {
     let frame = match serde_json::from_str::<ClientFrame>(text) {
@@ -182,6 +193,18 @@ async fn handle_text(
         }
     };
     let response = match frame {
+        ClientFrame::Activity { idle } => {
+            app.games
+                .activity(
+                    id,
+                    identity.subject.clone(),
+                    session.to_owned(),
+                    idle,
+                    now_ms(),
+                )
+                .await?;
+            return Ok(None);
+        }
         ClientFrame::Command { request } => {
             let request_id = request.request_id.clone();
             if let Some(grant) = app.auth.external_grant(&bearer.0, now_ms() / 1000)?

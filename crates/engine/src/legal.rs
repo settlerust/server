@@ -5,7 +5,7 @@ use crate::*;
 /// Finite legal suggestions. Includes one discard choice and unit bank trades;
 /// clients can submit any legal quantities, discards, or negotiated trade.
 pub fn legal_actions(s: &State, p: u8) -> Vec<Action> {
-    if p >= s.settings.players || matches!(s.phase, Phase::Finished { .. }) {
+    if p >= s.settings.players || s.is_retired(p) || matches!(s.phase, Phase::Finished { .. }) {
         return vec![];
     }
     if let Phase::Discard { pending } = s.phase {

@@ -3,6 +3,7 @@ mod admission;
 mod discard;
 mod lobby;
 mod messaging;
+mod presence;
 mod projection;
 mod trades;
 use crate::{
@@ -69,7 +70,11 @@ pub fn create(
             connected: false,
             ready: false,
             grace_turn: None,
+            idle: false,
+            disconnected_at_ms: None,
+            resolution: None,
         }],
+        display_names: Default::default(),
         game: None,
         opening: None,
         admission: None,
@@ -119,7 +124,7 @@ pub fn duplicate(
     Ok(None)
 }
 pub fn reduce(input: &Room, event: Input, now: u64) -> Result<(Room, Record)> {
-    reduce_version(input, event, now, "base-v8")
+    reduce_version(input, event, now, "base-v9")
 }
 fn reduce_version(
     input: &Room,
@@ -130,11 +135,83 @@ fn reduce_version(
     let legacy = engine_version == "base-v1";
     let mut room = input.clone();
     let mut public = vec![];
-    let timed_trades = engine_version == "base-v8";
+    let timed_trades = matches!(engine_version, "base-v8" | "base-v9");
     if timed_trades {
         trades::expire_due(&mut room, now, &mut public);
     }
     match &event {
+        Input::Activity { subject, idle } => {
+            presence::activity(&mut room, subject, *idle, &mut public)?
+        }
+        Input::DisconnectTimeout => presence::expire(&mut room, now, &mut public)?,
+        Input::ComputerCommand { seat, request } => {
+            let member = room
+                .members
+                .iter_mut()
+                .find(|m| {
+                    m.seat == Some(*seat) && m.resolution == Some(DisconnectResolution::Expert)
+                })
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::Conflict, "computer no longer controls this seat")
+                })?;
+            let identity = member.identity.clone();
+            member.resolution = None;
+            if request.expected_version != room.version {
+                return Err(Error::conflict(room.version));
+            }
+            command(
+                &mut room,
+                &identity,
+                &request.command,
+                &request.request_id,
+                now,
+                &mut public,
+                engine_version,
+            )?;
+            if let Some(member) = room.members.iter_mut().find(|m| m.seat == Some(*seat)) {
+                member.resolution = Some(DisconnectResolution::Expert);
+            }
+        }
+        Input::DisplayName { identity, revision } => {
+            crate::auth::validate_name(&identity.name)?;
+            if room.member(&identity.subject).is_none()
+                && !room.display_names.contains_key(&identity.subject)
+            {
+                return Err(Error::new(
+                    ErrorCode::Forbidden,
+                    "join before updating a display name",
+                ));
+            }
+            if room
+                .display_names
+                .get(&identity.subject)
+                .is_some_and(|old| old.revision >= *revision)
+            {
+                return Err(Error::new(
+                    ErrorCode::Conflict,
+                    "display name revision is stale",
+                ));
+            }
+            room.display_names.insert(
+                identity.subject.clone(),
+                DisplayName {
+                    name: identity.name.clone(),
+                    revision: *revision,
+                },
+            );
+            if let Some(member) = room
+                .members
+                .iter_mut()
+                .find(|member| member.identity.subject == identity.subject)
+            {
+                member.identity.name.clone_from(&identity.name);
+                public.push(PublicEvent::Presence {
+                    seat: member.seat,
+                    name: identity.name.clone(),
+                    connected: member.connected,
+                });
+            }
+        }
         Input::Admission { identity, request } => {
             admission::update(&mut room, identity, request)?;
             public.push(PublicEvent::AdmissionChanged);
@@ -175,14 +252,20 @@ fn reduce_version(
                 room.receipts.remove(0);
             }
         }
-        Input::Presence { subject, connected } => lobby::presence(
-            &mut room,
-            subject,
-            *connected,
-            now,
-            &mut public,
-            matches!(engine_version, "base-v7" | "base-v8"),
-        )?,
+        Input::Presence { subject, connected } => {
+            lobby::presence(
+                &mut room,
+                subject,
+                *connected,
+                now,
+                &mut public,
+                matches!(engine_version, "base-v7" | "base-v8" | "base-v9"),
+                engine_version == "base-v9",
+            )?;
+            if engine_version == "base-v9" {
+                presence::connection_clock(&mut room, subject, *connected, now);
+            }
+        }
         Input::Timeout => {
             if room.deadline_ms.is_none_or(|d| d > now) && public.is_empty() {
                 return Err(Error::new(
@@ -214,13 +297,13 @@ fn reduce_version(
     }
     if matches!(
         engine_version,
-        "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8"
+        "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8" | "base-v9"
     ) {
         trades::prune(&mut room, &mut public);
     }
     if matches!(
         engine_version,
-        "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8"
+        "base-v3" | "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8" | "base-v9"
     ) {
         append_theft_details(input, &room, &mut public);
     }
@@ -273,14 +356,17 @@ fn command(
 ) -> Result<()> {
     let modern = matches!(
         engine_version,
-        "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8"
+        "base-v4" | "base-v5" | "base-v6" | "base-v7" | "base-v8" | "base-v9"
     );
     let require_ready = matches!(
         engine_version,
-        "base-v5" | "base-v6" | "base-v7" | "base-v8"
+        "base-v5" | "base-v6" | "base-v7" | "base-v8" | "base-v9"
     );
-    let close_declined = matches!(engine_version, "base-v6" | "base-v7" | "base-v8");
-    let lock_opening = matches!(engine_version, "base-v7" | "base-v8");
+    let close_declined = matches!(
+        engine_version,
+        "base-v6" | "base-v7" | "base-v8" | "base-v9"
+    );
+    let lock_opening = matches!(engine_version, "base-v7" | "base-v8" | "base-v9");
     if let Command::Join { name, spectator } = command {
         if room.research && !spectator {
             return Err(Error::new(
@@ -296,7 +382,30 @@ fn command(
     if room.member(&identity.subject).is_none() {
         return Err(Error::new(ErrorCode::Forbidden, "join this game first"));
     }
+    if room
+        .member(&identity.subject)
+        .is_some_and(|m| m.resolution.is_some())
+        && !matches!(command, Command::ResolveDisconnect { .. })
+    {
+        return Err(Error::new(
+            ErrorCode::Forbidden,
+            "this seat is no longer controlled by its former player",
+        ));
+    }
     match command {
+        Command::ResolveDisconnect {
+            seat,
+            disconnected_at_ms,
+            resolution,
+        } => {
+            if room.host != identity.subject {
+                return Err(Error::new(
+                    ErrorCode::Forbidden,
+                    "only the host can resolve a disconnected seat",
+                ));
+            }
+            presence::resolve(room, *seat, *disconnected_at_ms, *resolution, now, events)
+        }
         Command::SetReady { ready } => {
             lobby::set_ready(room, identity, *ready, events, lock_opening)
         }
@@ -351,7 +460,7 @@ fn command(
                     "offer lifetime must be between 1 and 300 seconds",
                 ));
             }
-            let timed = engine_version == "base-v8";
+            let timed = matches!(engine_version, "base-v8" | "base-v9");
             trades::offer(
                 room,
                 p,
@@ -443,7 +552,7 @@ pub fn state_hash(room: &Room) -> Result<String> {
 fn record(room: &Room, input: Input, now: u64, public: Vec<PublicEvent>) -> Result<Record> {
     Ok(Record {
         schema: 1,
-        engine_version: "base-v8".into(),
+        engine_version: "base-v9".into(),
         game_id: room.id.clone(),
         sequence: room.version,
         timestamp_ms: now,
@@ -467,6 +576,7 @@ pub fn replay(records: &[Record]) -> Result<Room> {
                     | "base-v6"
                     | "base-v7"
                     | "base-v8"
+                    | "base-v9"
             )
         {
             return Err(Error::new(

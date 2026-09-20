@@ -17,6 +17,7 @@ fn grant(id: &str, role: Role, now: u64) -> Grant {
         aud: "settlers-v1".into(),
         sub: "player-0".into(),
         name: "Player 0".into(),
+        name_revision: None,
         iat: now,
         nbf: now,
         exp: now + 900,
@@ -205,6 +206,7 @@ async fn rest_and_websocket_enforce_spectator_grants_and_disable_issuance() {
     );
     let mut spectator = grant(&h.id, Role::Spectator, now_ms() / 1000);
     spectator.sub = "observer".into();
+    spectator.name = "Observer".into();
     let jwt = token(&spectator);
     let command = request(
         1,
@@ -278,4 +280,89 @@ async fn rest_and_websocket_enforce_spectator_grants_and_disable_issuance() {
     }
     socket.close().await.unwrap();
     task.abort();
+}
+
+#[tokio::test]
+async fn managed_names_are_signed_versioned_and_cannot_be_overridden_by_request_bodies() {
+    let h = Harness::new().await;
+    let app = router(App {
+        auth: Auth::verification_only(PUBLIC, "https://example.test", ID).unwrap(),
+        games: h.service.clone(),
+    });
+    let mut host = grant(ID, Role::Host, now_ms() / 1000);
+    host.sub = "google:host".into();
+    host.name = "Maya C".into();
+    host.name_revision = Some(1);
+    let jwt = token(&host);
+    let created = http(&app, "POST", "/v1/games", Some(&jwt), Some(serde_json::json!({
+        "name": "Privacy", "settings": Settings::default(), "host_as_player": true, "player_name": "Maya Louise Chen"
+    }))).await;
+    assert_eq!(created.0, 200);
+    assert_eq!(created.1["members"][0]["name"], "Maya C");
+    assert!(!created.1.to_string().contains("Louise"));
+    host.name = "MC".into();
+    host.name_revision = Some(2);
+    let changed = http(
+        &app,
+        "GET",
+        &format!("/v1/games/{ID}"),
+        Some(&token(&host)),
+        None,
+    )
+    .await;
+    assert_eq!(changed.0, 200);
+    assert_eq!(changed.1["members"][0]["name"], "MC");
+    let stale = http(&app, "GET", &format!("/v1/games/{ID}"), Some(&jwt), None).await;
+    assert_eq!(stale.1["members"][0]["name"], "MC");
+    let update = http(
+        &app,
+        "POST",
+        &format!("/v1/games/{ID}/display-name"),
+        Some(&token(&host)),
+        Some(serde_json::json!({"name":"Injected Name", "subject":"someone-else"})),
+    )
+    .await;
+    assert_eq!(update.0, 200);
+    assert_eq!(
+        h.service.view(ID, &host.sub).await.unwrap().members[0].name,
+        "MC"
+    );
+    let mut visitor = host.clone();
+    visitor.sub = "google:visitor".into();
+    visitor.name = "Jules M".into();
+    visitor.role = Role::Player;
+    let command = request(
+        h.service.room(ID).await.unwrap().version,
+        Command::Join {
+            name: "Jules Martin".into(),
+            spectator: false,
+        },
+    );
+    let forged = http(
+        &app,
+        "POST",
+        &format!("/v1/games/{ID}/commands"),
+        Some(&token(&visitor)),
+        Some(serde_json::to_value(command).unwrap()),
+    )
+    .await;
+    assert_eq!(forged.0, 403);
+    let old = Grant {
+        name_revision: None,
+        name: "Maya Louise Chen".into(),
+        ..host
+    };
+    assert_eq!(old.identity().name, "Maya C");
+    assert_eq!(
+        http(
+            &app,
+            "POST",
+            &format!("/v1/games/{ID}/display-name"),
+            Some(&token(&old)),
+            Some(serde_json::json!({}))
+        )
+        .await
+        .0,
+        403
+    );
 }

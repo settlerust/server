@@ -32,6 +32,7 @@ pub fn router(app: App) -> Router {
         .route("/v1/games/{id}/players", get(routes::players))
         .route("/v1/games/{id}/commands", post(routes::command))
         .route("/v1/games/{id}/admission", post(routes::admission))
+        .route("/v1/games/{id}/display-name", post(routes::display_name))
         .route("/v1/games/{id}/events", get(routes::history))
         .route("/v1/games/{id}/ws", get(websocket::upgrade))
         .route_layer(middleware::from_fn_with_state(app.clone(), authenticate));
@@ -83,6 +84,22 @@ async fn authenticate(
             request.method() == axum::http::Method::POST,
         )?;
         let identity = grant.identity();
+        if let Some(revision) = grant.name_revision
+            && (request.uri().path() == format!("/v1/games/{}", grant.game_id)
+                || request
+                    .uri()
+                    .path()
+                    .starts_with(&format!("/v1/games/{}/", grant.game_id)))
+        {
+            app.games
+                .display_name(
+                    &grant.game_id,
+                    identity.clone(),
+                    revision,
+                    crate::config::now_ms(),
+                )
+                .await?;
+        }
         request.extensions_mut().insert(grant);
         identity
     } else {

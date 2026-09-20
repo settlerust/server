@@ -216,6 +216,9 @@ impl Table {
                 .iter()
                 .enumerate()
                 .map(|(i, label)| MemberView {
+                    idle: false,
+                    disconnected_at_ms: None,
+                    resolution: None,
                     seat: Some(i as u8),
                     name: format!("{label} seat {i}"),
                     connected: true,

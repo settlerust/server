@@ -10,6 +10,12 @@ pub struct Member {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ready: bool,
     pub grace_turn: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub idle: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disconnected_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<DisconnectResolution>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredReceipt {
@@ -36,6 +42,8 @@ pub struct Room {
     pub settings: Settings,
     pub seed: [u8; 32],
     pub members: Vec<Member>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub display_names: std::collections::BTreeMap<String, DisplayName>,
     pub game: Option<State>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opening: Option<Opening>,
@@ -49,6 +57,11 @@ pub struct Room {
     pub discard: Option<DiscardRound>,
     pub chat_window_ms: [u64; 4],
     pub chat_count: [u8; 4],
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DisplayName {
+    pub name: String,
+    pub revision: u64,
 }
 impl Room {
     /// Earliest authoritative clock, including offers while the turn remains open.
@@ -81,7 +94,10 @@ impl Room {
             connected_players: self
                 .members
                 .iter()
-                .filter(|m| m.seat.is_some() && m.connected)
+                .filter(|m| {
+                    m.seat.is_some()
+                        && (m.connected || m.resolution == Some(DisconnectResolution::Expert))
+                })
                 .count() as u8,
             finished: self
                 .game
@@ -92,6 +108,19 @@ impl Room {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Input {
+    Activity {
+        subject: String,
+        idle: bool,
+    },
+    DisconnectTimeout,
+    ComputerCommand {
+        seat: u8,
+        request: CommandRequest,
+    },
+    DisplayName {
+        identity: Identity,
+        revision: u64,
+    },
     Admission {
         identity: Identity,
         request: AdmissionUpdate,

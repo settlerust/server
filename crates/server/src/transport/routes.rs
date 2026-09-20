@@ -47,16 +47,37 @@ pub(super) async fn create(
     State(app): State<App>,
     Extension(identity): Extension<Identity>,
     grant: Option<Extension<crate::managed_auth::Grant>>,
-    ApiJson(request): ApiJson<CreateGame>,
+    ApiJson(mut request): ApiJson<CreateGame>,
 ) -> Result<Json<GameView>> {
     if let Some(Extension(grant)) = grant {
-        return Ok(Json(
+        request.player_name = Some(identity.name.clone());
+        let view = app
+            .games
+            .create_assigned(&grant.game_id, identity.clone(), request, now_ms())
+            .await?;
+        if let Some(revision) = grant.name_revision {
             app.games
-                .create_assigned(&grant.game_id, identity, request, now_ms())
-                .await?,
-        ));
+                .display_name(&grant.game_id, identity.clone(), revision, now_ms())
+                .await?;
+            return Ok(Json(
+                app.games.view(&grant.game_id, &identity.subject).await?,
+            ));
+        }
+        return Ok(Json(view));
     }
     Ok(Json(app.games.create(identity, request, now_ms()).await?))
+}
+pub(super) async fn display_name(
+    grant: Option<Extension<crate::managed_auth::Grant>>,
+) -> Result<Json<serde_json::Value>> {
+    if grant.is_none_or(|Extension(grant)| grant.name_revision.is_none()) {
+        return Err(Error::new(
+            ErrorCode::Forbidden,
+            "a server-signed display name is required",
+        ));
+    }
+    // Authentication middleware has already committed the grant's own name.
+    Ok(Json(serde_json::json!({"updated": true})))
 }
 pub(super) async fn game(
     State(app): State<App>,

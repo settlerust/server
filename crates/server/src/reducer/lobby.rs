@@ -60,6 +60,9 @@ pub(super) fn join(
         connected: false,
         ready: false,
         grace_turn: None,
+        idle: false,
+        disconnected_at_ms: None,
+        resolution: None,
     });
     events.push(PublicEvent::Joined {
         seat,
@@ -92,7 +95,12 @@ fn can_start(
             "fill all player seats before starting",
         ));
     }
-    if require_ready && !ready_decided && players.iter().any(|m| !m.ready || !m.connected) {
+    if require_ready
+        && !ready_decided
+        && players
+            .iter()
+            .any(|m| m.resolution.is_none() && (!m.ready || !m.connected))
+    {
         return Err(Error::new(
             ErrorCode::Conflict,
             "every player must be connected and ready to play",
@@ -163,6 +171,20 @@ pub(super) fn start(
         State::new(room.settings, room.seed)?
     });
     events.push(PublicEvent::Started);
+    for seat in room
+        .members
+        .iter()
+        .filter(|m| m.resolution == Some(DisconnectResolution::Retire))
+        .filter_map(|m| m.seat)
+    {
+        if let Some(game) = &room.game
+            && !matches!(game.phase, Phase::Finished { .. })
+        {
+            let (next, effects) = settlers_engine::retire(game, seat)?;
+            room.game = Some(next);
+            events.extend(effects.into_iter().map(|event| PublicEvent::Rule { event }));
+        }
+    }
     Ok(())
 }
 fn opening_state(room: &Room) -> Result<(State, Opening)> {
@@ -241,13 +263,16 @@ pub(super) fn presence(
     now: u64,
     events: &mut Vec<PublicEvent>,
     lock_opening: bool,
+    track_clock: bool,
 ) -> Result<()> {
     let member = room
         .members
         .iter_mut()
         .find(|m| m.identity.subject == subject)
         .ok_or_else(|| Error::new(ErrorCode::Forbidden, "join before connecting"))?;
-    if member.connected == connected {
+    if member.connected == connected
+        && !(track_clock && !connected && member.disconnected_at_ms.is_none())
+    {
         return Err(Error::new(ErrorCode::Conflict, "presence has not changed"));
     }
     member.connected = connected;

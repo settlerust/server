@@ -2,6 +2,8 @@
 Requires release binaries, Node 24, and `pip install -e clients/python jsonschema`.
 """
 import json
+from contextlib import ExitStack
+from websockets.sync.client import connect
 import os
 from pathlib import Path
 import socket
@@ -49,24 +51,50 @@ def main():
                                     'settings': {'players': 2, 'points_to_win': 10, 'discard_limit': 7, 'turn_seconds': 86400}})
                 game_id = view['id']
                 peer.submit(game_id, peer.prepare(view['version'], {'type': 'join', 'name': 'Peer', 'spectator': False}))
-                view = host.game(game_id)
-                host.submit(game_id, host.prepare(view['version'], {'type': 'start'}))
-                view = host.game(game_id)
-                actor = [host, peer][view['game']['current']]
-                own = actor.game(game_id)
-                action = own['game']['legal_actions'][0]
-                request = actor.prepare(own['version'], {'type': 'act', 'action': action})
-                receipt = actor.submit(game_id, request)
-                before = host.game(game_id)
-                process.kill()  # No graceful shutdown or final archive flush.
-                process.wait(timeout=10)
-                process = start()
-                after = host.game(game_id)  # The same JWT must still authenticate.
-                assert before == after, 'durable game changed across abrupt crash'
-                retried = actor.submit(game_id, request)
-                assert retried['duplicate'] and retried['version'] == receipt['version']
-                assert host.history(game_id)['next_after'] == after['version']
-                print(json.dumps({'crash_recovery': 'passed', 'saved_jwt': 'passed', 'idempotent_retry': 'passed'}))
+                with ExitStack() as sockets:
+                    for client in [host, peer]:
+                        game_socket = sockets.enter_context(connect(
+                            base.replace('http', 'ws', 1) + f'/v1/games/{game_id}/ws',
+                            additional_headers={'Authorization': 'Bearer ' + client.token},
+                            subprotocols=['settlers-v1']))
+                        snapshot = json.loads(game_socket.recv(timeout=5))
+                        assert snapshot['type'] == 'snapshot'
+                        assert next(m for m in snapshot['game']['members'] if m['is_you'])['connected']
+                    for client in [host, peer]:
+                        current = client.game(game_id)
+                        client.submit(game_id, client.prepare(current['version'], {'type': 'set_ready', 'ready': True}))
+                    view = host.game(game_id)
+                    host.submit(game_id, host.prepare(view['version'], {'type': 'start'}))
+                    view = host.game(game_id)
+                    actor = [host, peer][view['game']['current']]
+                    own = actor.game(game_id)
+                    action = own['game']['legal_actions'][0]
+                    request = actor.prepare(own['version'], {'type': 'act', 'action': action})
+                    receipt = actor.submit(game_id, request)
+                    before = host.game(game_id)
+                    process.kill()  # No graceful shutdown or final archive flush.
+                    process.wait(timeout=10)
+                    process = start()
+                    after = host.game(game_id)  # The same JWT must still authenticate.
+                    # Recovery commits one disconnect per stale socket identity.
+                    # The active seat receives its disconnect grace period; gameplay stays durable.
+                    assert {k: v for k, v in before.items() if k not in ('version', 'members', 'deadline_ms')} == {
+                        k: v for k, v in after.items() if k not in ('version', 'members', 'deadline_ms')
+                    }, 'durable fields changed across abrupt crash: ' + ', '.join(k for k in before if k not in ('version', 'members', 'deadline_ms') and before[k] != after[k])
+                    current = next(m for m in after['members'] if m['seat'] == after['game']['current'])
+                    assert after['deadline_ms'] == max(before['deadline_ms'], current['disconnected_at_ms'] + after['settings']['turn_seconds'] * 1000)
+                    assert after['version'] == before['version'] + sum(m['connected'] for m in before['members'])
+                    assert len(before['members']) == len(after['members'])
+                    for old, recovered in zip(before['members'], after['members']):
+                        presence = ('connected', 'idle', 'disconnected_at_ms')
+                        assert {k: v for k, v in old.items() if k not in presence} == {
+                            k: v for k, v in recovered.items() if k not in presence}
+                        assert not recovered['connected'] and not recovered.get('idle', False)
+                        assert recovered['disconnected_at_ms'] is not None
+                    retried = actor.submit(game_id, request)
+                    assert retried['duplicate'] and retried['version'] == receipt['version']
+                    assert host.history(game_id)['next_after'] == after['version']
+                    print(json.dumps({'crash_recovery': 'passed', 'saved_jwt': 'passed', 'idempotent_retry': 'passed'}))
             except BaseException:
                 log.flush()
                 print(log_path.read_text()[-6000:], file=sys.stderr)

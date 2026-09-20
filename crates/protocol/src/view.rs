@@ -4,6 +4,12 @@ use serde::{Deserialize, Serialize};
 use settlers_engine::{Observation, Resources, Settings};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MemberView {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub idle: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disconnected_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<crate::DisconnectResolution>,
     pub seat: Option<u8>,
     pub name: String,
     pub connected: bool,

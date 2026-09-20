@@ -177,3 +177,49 @@ appears in `declined`. Reloads retain explicit responses.
 Every public player includes `victory_cards` only after the phase is `finished`.
 This count includes both mature and newly drawn victory-point cards; it is already
 included in final `points`. Other private development cards remain hidden.
+
+## Hosted display names
+
+External grants may carry `name_revision`, a monotonic account profile revision.
+Their `name` is the server-computed display name. Hosted creation ignores a
+client-supplied `player_name`, and join commands must match the signed name.
+Legacy hosted grants without a revision use first name and last initial.
+
+`POST /v1/games/{id}/display-name` accepts a versioned external grant and returns
+`{"updated":true}`. The name and subject come exclusively from the grant; the
+request body cannot change either. The same update is applied on authenticated
+reads, commands, and WebSocket connections. Identities that have never joined the
+room are ignored. Newer revisions are committed with the room and replay outbox;
+equal and older revisions cannot restore a previous name.
+
+REST views, WebSocket snapshots/events, and paginated history use the room's
+current display-name projection, including for events recorded before a privacy
+change. Private persistence and restricted research archives retain replay inputs.
+An empty display-name map is omitted from serialization to preserve legacy hashes.
+
+
+## Presence and disconnected seats
+
+A game WebSocket accepts `{"type":"activity","idle":true}` (or `false`) as a
+self-report. Across multiple sockets, a person is idle only when all their sockets
+report idle. Socket pongs maintain connectivity; idle never means disconnected.
+Member projections include optional `idle`, `disconnected_at_ms`, and `resolution`
+(`retire` or `expert`). Public `presence`, `activity`, and `disconnect_resolved`
+events are durable, broadcast and available from event history.
+
+After 120 seconds disconnected, the host can send `resolve_disconnect` with the
+seat, its exact `disconnected_at_ms`, and a resolution. The normal request UUID
+and expected-version fence still apply. Reconnection or a new disconnect invalidates
+old decisions. At 150 seconds, actor ticks choose Expert without a host request;
+late retirement commands cannot override it. Former controllers become spectators
+of that seat and cannot issue player commands or read its hand.
+
+Expert keeps the existing hand and pieces. Retirement returns resources and removes
+unplayed development cards from circulation. Occupied edges and intersections remain
+blocked, production and awards stop, and turns skip retired seats. A final surviving
+player wins. During setup, retired seats are skipped as well. The public observation's
+optional `retired` bit mask identifies gray dead zones.
+
+Recovery also applies to allocated tables before play begins. A takeover clears
+unfinished discard selections without moving cards, so Expert can choose the full
+required discard from the preserved hand.

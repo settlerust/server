@@ -159,8 +159,22 @@ pub struct State {
     pub longest_road: Option<u8>,
     pub largest_army: Option<u8>,
     pub turn: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub retired: u8,
+}
+pub(crate) fn is_zero(value: &u8) -> bool {
+    *value == 0
 }
 impl State {
+    pub fn is_retired(&self, seat: u8) -> bool {
+        self.retired & (1 << seat) != 0
+    }
+    pub(crate) fn next_player(&self, seat: u8) -> u8 {
+        (1..=self.settings.players)
+            .map(|offset| (seat + offset) % self.settings.players)
+            .find(|&p| !self.is_retired(p))
+            .unwrap_or(seat)
+    }
     pub fn new(settings: Settings, seed: [u8; 32]) -> Result<Self, RuleError> {
         settings.validate()?;
         let mut random = Random::new(seed);
@@ -183,6 +197,7 @@ impl State {
             longest_road: None,
             largest_army: None,
             turn: 0,
+            retired: 0,
         })
     }
     pub fn player(&self, seat: u8) -> Result<&Player, RuleError> {

@@ -6,6 +6,14 @@ use settlers_engine::{Event, RuleError};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PublicEvent {
+    Activity {
+        seat: Option<u8>,
+        idle: bool,
+    },
+    DisconnectResolved {
+        seat: u8,
+        resolution: crate::DisconnectResolution,
+    },
     LobbyCreated,
     AdmissionChanged,
     SettingsChanged {
