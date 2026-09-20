@@ -49,7 +49,7 @@ Failure-injection adapters test both pre-commit failure and a successful commit 
 
 ## Real processes and cross-language clients
 
-The disposable smoke test launches the actual release server, four independent Rust policy processes, and Python/TypeScript clients. It validates WebSocket frames against JSON Schema, restarts a policy with saved credentials, finishes a ten-point game, reads paginated history, then kills and restarts the server to verify state, JWT continuity, and an idempotent retry. It removes its temporary data and terminates its own processes.
+The disposable smoke test launches the actual release server, four independent Rust policy processes, and Python/TypeScript clients. It validates WebSocket frames against JSON Schema, restarts a policy with saved credentials, finishes a ten-point game, reads paginated history, then kills and restarts the server to verify state, JWT continuity, and an idempotent retry. It removes its temporary data and terminates its own processes. Recovery records each stale connection as disconnected; game state and the original command receipt must stay unchanged.
 
 ```sh
 cargo build --workspace --release

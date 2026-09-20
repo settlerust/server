@@ -76,7 +76,21 @@ def main():
                     process.wait(timeout=10)
                     process = start()
                     after = host.game(game_id)  # The same JWT must still authenticate.
-                    assert before == after, 'durable game changed across abrupt crash'
+                    # Recovery commits one disconnect per stale socket identity.
+                    # The active seat receives its disconnect grace period; gameplay stays durable.
+                    assert {k: v for k, v in before.items() if k not in ('version', 'members', 'deadline_ms')} == {
+                        k: v for k, v in after.items() if k not in ('version', 'members', 'deadline_ms')
+                    }, 'durable fields changed across abrupt crash: ' + ', '.join(k for k in before if k not in ('version', 'members', 'deadline_ms') and before[k] != after[k])
+                    current = next(m for m in after['members'] if m['seat'] == after['game']['current'])
+                    assert after['deadline_ms'] == max(before['deadline_ms'], current['disconnected_at_ms'] + after['settings']['turn_seconds'] * 1000)
+                    assert after['version'] == before['version'] + sum(m['connected'] for m in before['members'])
+                    assert len(before['members']) == len(after['members'])
+                    for old, recovered in zip(before['members'], after['members']):
+                        presence = ('connected', 'idle', 'disconnected_at_ms')
+                        assert {k: v for k, v in old.items() if k not in presence} == {
+                            k: v for k, v in recovered.items() if k not in presence}
+                        assert not recovered['connected'] and not recovered.get('idle', False)
+                        assert recovered['disconnected_at_ms'] is not None
                     retried = actor.submit(game_id, request)
                     assert retried['duplicate'] and retried['version'] == receipt['version']
                     assert host.history(game_id)['next_after'] == after['version']
