@@ -36,6 +36,13 @@ fn yes() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DisconnectResolution {
+    Retire,
+    Expert,
+}
+
 /// Control-plane admission fence. Accepted only from an external host grant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -76,6 +83,11 @@ pub struct Communication {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    ResolveDisconnect {
+        seat: u8,
+        disconnected_at_ms: u64,
+        resolution: DisconnectResolution,
+    },
     /// Explicitly enroll an agent; required for player seats in research tables.
     JoinAgent {
         name: String,
@@ -150,7 +162,15 @@ pub struct CommandRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientFrame {
-    Command { request: CommandRequest },
-    Ping { nonce: String },
+    /// Self-reported activity; never used as evidence of a disconnection.
+    Activity {
+        idle: bool,
+    },
+    Command {
+        request: CommandRequest,
+    },
+    Ping {
+        nonce: String,
+    },
     Resync,
 }

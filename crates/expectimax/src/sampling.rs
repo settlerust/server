@@ -51,6 +51,7 @@ pub fn worlds(
     for sample in 0..count {
         let mut rng = random(u32::from(sample) + 1);
         let mut s = State {
+            retired: o.retired,
             board,
             layout: Layout {
                 hexes: o.hexes,

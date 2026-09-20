@@ -195,6 +195,8 @@ async fn historical_opening_disconnects_keep_their_original_replay_behavior() {
     )
     .unwrap();
     historical.members[0].ready = false;
+    // Version 6 predates persisted disconnect clocks.
+    historical.members[0].disconnected_at_ms = None;
     record.engine_version = "base-v6".into();
     record.state_hash = reducer::state_hash(&historical).unwrap();
     record.public.insert(

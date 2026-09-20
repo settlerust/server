@@ -199,3 +199,33 @@ The settlers.dev browser app exports its saved WASM checkpoint when the victory
 screen appears and sends it to its own completed-game archive. This export does
 not use the hosted game fleet or confer hosted karma. Browser checkpoint restore
 keeps the remaining turn and trade durations; closing the tab pauses local play.
+
+## Hosted name privacy checks
+
+`tests/name_privacy.rs` verifies legacy redaction, current-name history projection,
+stale revision rejection, departed members, archival replay and restart.
+`tests/managed_auth.rs` also checks that request bodies cannot override signed
+names and that an ordinary game read applies a new name revision. These changes
+remain in the server identity layer; game rules and public event DTOs are unchanged.
+
+
+## Disconnect recovery (base-v9)
+
+`base-v9` introduces persisted disconnect clocks and recorded computer decisions.
+Versions 1–8 retain their original presence transitions and hashes. New optional
+fields are omitted when empty. `tests/disconnection.rs` covers concurrent sockets,
+idle aggregation, reconnect and timeout races, host authorization, private projections,
+Expert execution, and replay/restart. Engine `tests/retirement.rs` checks conservation,
+occupancy, production, setup, turn order, discards and last-player victory.
+
+The frozen Expert checkpoint is bundled in `crates/server/assets/expert.bin.gz`.
+Its source is the project's 96,093-game hex-portfolio-main research baseline; the
+raw SHA-256 is `f8e61e66e0279b0fe67f5f4d6be0ad3ca0a86617e91ed24fe08a34a997b46f0c`.
+The loader verifies the digest and never silently substitutes another evaluator.
+Native hosted search uses depth 3, a 4-second limit and 1,200,000 transitions with
+decision-local caching. Only a redacted `GameView` crosses into the blocking policy
+worker; its selected command is committed with the original observed version.
+
+Deploy this server before the corresponding lobby client. The new client sends
+activity frames and resolution commands; old clients continue to connect, but do
+not display the new host decision modal.

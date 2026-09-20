@@ -3,6 +3,12 @@ use crate::{
     model::*,
 };
 use settlers_protocol::*;
+fn display_name(room: &Room, subject: &str, fallback: &str) -> String {
+    room.display_names.get(subject).map_or_else(
+        || crate::identity::legacy_display_name(subject, fallback),
+        |name| name.name.clone(),
+    )
+}
 /// Redaction is shared by REST, reconnect snapshots, live events, and history.
 pub fn view(room: &Room, subject: &str) -> Result<GameView> {
     if room.game.is_some() && room.member(subject).is_none() {
@@ -11,7 +17,9 @@ pub fn view(room: &Room, subject: &str) -> Result<GameView> {
             "join as a player or spectator first",
         ));
     }
-    let seat = room.seat(subject);
+    let seat = room
+        .seat(subject)
+        .filter(|_| room.member(subject).is_some_and(|m| m.resolution.is_none()));
     Ok(GameView {
         id: room.id.clone(),
         name: room.name.clone(),
@@ -37,9 +45,12 @@ pub fn view(room: &Room, subject: &str) -> Result<GameView> {
             .iter()
             .map(|m| MemberView {
                 seat: m.seat,
-                name: m.identity.name.clone(),
-                connected: m.connected,
-                ready: m.ready,
+                idle: m.idle,
+                disconnected_at_ms: m.disconnected_at_ms,
+                resolution: m.resolution,
+                name: display_name(room, &m.identity.subject, &m.identity.name),
+                connected: m.connected || m.resolution == Some(DisconnectResolution::Expert),
+                ready: m.ready || m.resolution.is_some(),
                 is_you: m.identity.subject == subject,
             })
             .collect(),
@@ -89,11 +100,34 @@ pub fn batch(room: &Room, subject: &str, record: &Record) -> Result<EventBatch> 
             "join before reading event history",
         ));
     }
-    let seat = room.seat(subject);
+    let seat = room
+        .seat(subject)
+        .filter(|_| room.member(subject).is_some_and(|m| m.resolution.is_none()));
     let events = record
         .public
         .iter()
         .filter_map(|event| match event {
+            PublicEvent::Joined { seat, name } | PublicEvent::Presence { seat, name, .. } => {
+                let subject = match &record.input {
+                    Input::Create { identity, .. }
+                    | Input::Command { identity, .. }
+                    | Input::DisplayName { identity, .. } => Some(identity.subject.as_str()),
+                    Input::Presence { subject, .. } => Some(subject.as_str()),
+                    _ => None,
+                };
+                let name = subject.map_or_else(
+                    || crate::identity::legacy_display_name("google:legacy", name),
+                    |subject| display_name(room, subject, name),
+                );
+                Some(match event {
+                    PublicEvent::Presence { connected, .. } => PublicEvent::Presence {
+                        seat: *seat,
+                        name,
+                        connected: *connected,
+                    },
+                    _ => PublicEvent::Joined { seat: *seat, name },
+                })
+            }
             PublicEvent::TheftDetails { player, victim, .. } => (seat
                 .is_some_and(|p| p == *player || p == *victim)
                 || (room.research && seat.is_none()))

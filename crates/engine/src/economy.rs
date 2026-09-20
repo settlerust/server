@@ -23,7 +23,9 @@ pub(crate) fn produce(s: &mut State, total: u8, emit: &mut impl FnMut(Event)) {
         }
         if let Some(r) = s.layout.resource(h) {
             for &v in &topology().hex_vertices[h as usize] {
-                if let Some(p) = s.board.owner(v) {
+                if let Some(p) = s.board.owner(v)
+                    && !s.is_retired(p)
+                {
                     demand[p as usize].0[r as usize] += if s.board.building(v) > 4 { 2 } else { 1 };
                 }
             }
@@ -124,7 +126,8 @@ pub(crate) fn trade(
         return Err(RuleError::WrongPhase);
     }
     s.player(other)?;
-    if other == p
+    if s.is_retired(other)
+        || other == p
         || (p != s.current && other != s.current)
         || give.total() == 0
         || receive.total() == 0

@@ -27,6 +27,8 @@ pub struct Grant {
     pub aud: String,
     pub sub: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_revision: Option<u64>,
     pub iat: u64,
     pub nbf: u64,
     pub exp: u64,
@@ -98,7 +100,11 @@ impl Grant {
     pub fn identity(&self) -> Identity {
         Identity {
             subject: self.sub.clone(),
-            name: self.name.clone(),
+            name: if self.name_revision.is_some() {
+                self.name.clone()
+            } else {
+                crate::identity::legacy_display_name(&self.sub, &self.name)
+            },
         }
     }
     pub fn authorize_path(&self, path: &str, post: bool) -> Result<()> {
@@ -114,6 +120,11 @@ impl Grant {
         Ok(())
     }
     pub fn authorize_command(&self, command: &Command) -> Result<()> {
+        if let Command::Join { name, .. } | Command::JoinAgent { name } = command
+            && *name != self.identity().name
+        {
+            return Err(denied());
+        }
         if self.role == Role::Player
             && matches!(
                 command,

@@ -9,7 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
-aws = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:aws-sdk-firehose", "dep:aws-sdk-s3", "dep:flate2", "dep:reqwest"]
+aws = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:aws-sdk-firehose", "dep:aws-sdk-s3", "dep:reqwest"]
 
 [dependencies]
 settlers-engine.workspace = true
@@ -40,7 +40,8 @@ aws-config = { version = "1", optional = true }
 aws-sdk-dynamodb = { version = "1", optional = true }
 aws-sdk-firehose = { version = "1", optional = true }
 aws-sdk-s3 = { version = "1", optional = true }
-flate2 = { version = "1", optional = true }
+flate2 = "1"
+settlers-expectimax = { path = "../expectimax" }
 reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]

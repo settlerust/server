@@ -1,6 +1,9 @@
 use crate::*;
 /// Maximum edge-simple trail. Opponent intersections may be endpoints but never transit nodes.
 pub fn road_length(s: &State, p: u8) -> u8 {
+    if s.is_retired(p) {
+        return 0;
+    }
     fn walk(s: &State, p: u8, v: u8, used: u128, entered: bool) -> u8 {
         if entered && s.board.owner(v).is_some_and(|owner| owner != p) {
             return 0;
@@ -35,6 +38,9 @@ fn award(values: [u8; 4], players: u8, minimum: u8, holder: Option<u8>) -> Optio
     }
 }
 pub fn public_points(s: &State, p: u8) -> u8 {
+    if s.is_retired(p) {
+        return 0;
+    }
     let player = &s.players[p as usize];
     player.settlements
         + 2 * player.cities

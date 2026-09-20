@@ -27,7 +27,11 @@ pub fn encode(record: &Record) -> Result<Vec<u8>> {
         Input::Create { identity, .. } => ("created", Some(identity.subject.as_str())),
         Input::Command { identity, .. } => ("command", Some(identity.subject.as_str())),
         Input::Admission { identity, .. } => ("admission", Some(identity.subject.as_str())),
+        Input::DisplayName { identity, .. } => ("display_name", Some(identity.subject.as_str())),
         Input::Presence { subject, .. } => ("presence", Some(subject.as_str())),
+        Input::Activity { subject, .. } => ("activity", Some(subject.as_str())),
+        Input::DisconnectTimeout => ("disconnect_timeout", None),
+        Input::ComputerCommand { .. } => ("computer_command", None),
         Input::Timeout => ("timeout", None),
     };
     let value = serde_json::json!({

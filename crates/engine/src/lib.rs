@@ -9,6 +9,8 @@ mod chance;
 mod economy;
 mod legal;
 mod random;
+mod retirement;
+pub use retirement::retire;
 mod scoring;
 mod state;
 mod timeout;

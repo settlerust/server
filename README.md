@@ -98,7 +98,8 @@ lifetime is one hour. Tokens must match this server and the requested game; both
 commands enforce their role. External hosts cannot change game settings after
 admission. The lobby issuer is responsible for admitting players and selecting the
 host before signing grants. POST `/v1/games` creates the assigned UUID once and
-recovers retries from the same host.
+recovers retries from the same host. An optional `name_revision` carries the
+account's display-name revision; see [hosted display names](docs/api.md#hosted-display-names).
 
 When using AWS storage, the process restores only games in its DynamoDB ownership
 manifest. State writes require both the expected version and matching owner.
@@ -129,3 +130,11 @@ Glue schema to convert this JSON envelope to Parquet, partition by `game_id`, an
 preserve the raw replay stream's existing `events/game_id=UUID/` gzip JSON path.
 The server does not read Parquet for replay. Research delivery failures retain the
 outbox, and archive pruning still requires identical raw S3/local read-back.
+
+
+Hosted disconnect recovery is enforced by the game actor: after 120 seconds offline,
+the host has 30 seconds to retire the seat or replace it with Expert AI. At 150
+seconds, the server selects Expert automatically. Reconnecting before resolution
+cancels recovery. Retired pieces retain occupancy, return resources to the bank,
+and stop producing or taking turns. Replacement policies run off the actor thread
+with the same redacted seat view as an external player.
