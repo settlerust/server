@@ -1,3 +1,18 @@
+<!-- BEGIN SETTLERS HARNESS -->
+## Settlers delivery contract
+
+This is the `server` repository in the Settlers workspace. Read [.agents/rules/product.md](.agents/rules/product.md) for its ownership, dependency and deployment map, and [.agents/rules/delivery.md](.agents/rules/delivery.md) before making or shipping changes.
+
+- **Current phase: stabilization.** Direct, non-force pushes to `dev` are allowed until the user declares the test version stable; dev deployments still run through CI/CD. Do not require a PR or enable protection that blocks this authorized phase.
+- For PR-based work, implement on `feature/<slug>`, `fix/<slug>`, `improvement/<slug>`, `chore/<slug>`, or another documented type, based on `origin/dev`. Share the exact branch name across coordinated repositories. No leading `/`.
+- Ordinary PRs target `dev`; release PRs are `dev` → `main`. Use this repository's `.github/PULL_REQUEST_TEMPLATE.md` or `.github/PULL_REQUEST_TEMPLATE/release.md`, with explicit Upstream and Downstream PR links (or `None`).
+- Use explicit push refspecs. Never push directly to `main` or force-push. After stability is declared, deliver changes to `dev` through topic PRs. Preserve unrelated edits and existing authorization boundaries.
+- Dev builds use dependency `dev` branches; production uses `main`. Validate the actual deployment owner's run and endpoint, not merely a dispatch job. Merge compatible upstream changes before consumers.
+- For implementation/PR work, read [.agents/skills/settlers-change/SKILL.md](.agents/skills/settlers-change/SKILL.md). For release work, read [.agents/skills/settlers-release/SKILL.md](.agents/skills/settlers-release/SKILL.md).
+
+These rules and skills are portable copies maintained in `settlerust/scripts` under `agent-harness/`. In the sibling workspace, regenerate with `python3 ../scripts/sync-agent-harness.py --write`; preserve the repository-specific instructions below.
+<!-- END SETTLERS HARNESS -->
+
 # Rust engineering contract
 
 Read `.agents/skills/rust-best-practices/SKILL.md` for Rust work. Its Apollo reference chapters are vendored with their MIT license. Project requirements below take precedence.
