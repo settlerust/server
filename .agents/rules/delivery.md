@@ -71,6 +71,8 @@ gh workflow run deploy.yml --repo settlerust/admin --ref dev
 
 Dispatch only affected owners. Infrastructure preview for the shared stack is the same service command with `-f operation=diff`. Inspect replacements before applying them. Do not cancel an active SST apply or run a second local apply against its stage.
 
+Publish and verify each repository's source CI workflow before enabling a downstream deployment gate that requires it. Deployment gates resolve current branch commits, reuse each commit's source CI, and pin those revisions for the build. Missing, failed, cancelled, or skipped source validation cannot be bypassed. Duplicate requests for the most recently deployed source combination skip the build and apply; use the deployment workflow's `force=true` input when runtime configuration or secrets changed without a source commit. Force rebuilds still require passing source CI. Shared UI browser tests remain automatic agent-run validation, not deployment steps.
+
 Find the actual run with `gh run list`, inspect its branch/source revisions, and watch it with `gh run watch RUN_ID --repo settlerust/OWNER --exit-status`. The service queue resolves matching branches when it starts; retrying an old job can deploy newer commits. Record actual source SHAs and workflow run URLs, then test the relevant live flow on the intended endpoint. HTTPS 200 alone does not establish authenticated/gameplay correctness. A green lobby/controller dispatch is not service deployment evidence.
 
 For regressions, deliver a fix/revert to `dev` (direct pushes are allowed during stabilization; use a typed PR afterward), validate it, and promote a coordinated `dev` → `main` release. Reverting application code does not undo data migrations or infrastructure replacements.

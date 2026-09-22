@@ -15,6 +15,8 @@ For PR-based work, inspect existing edits and create a typed branch from fetched
 
 Validate each affected repository and the consuming app using its documented checks. Local coordinated tests can use sibling topic branches; record that state accurately and revalidate the published `dev` combination after prerequisite merges. For docs/harness changes, validate links, generated copies, policy and installer behavior instead of running unrelated gameplay or paid experiments.
 
+For UI changes, automatically run design's browser-backed `npm test` and the affected application's browser checks before delivery. These checks remain the agent's responsibility even though shared UI browser tests are excluded from hosted CI/CD. Source CI owns each repository's other suites; deployments reuse successful checks for exact source commits rather than rerunning them.
+
 Review/stage the requested changes, commit, and push the explicit refspec for the selected phase when delivery is in scope. A request to commit all changes includes the reviewed pending changes, not ignored secrets or generated build output. During stabilization, direct delivery to dev needs no change PR. When using a PR, create it from that repository, filling its own template:
 
 ```sh

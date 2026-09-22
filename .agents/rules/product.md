@@ -43,11 +43,13 @@ Run from the owning repository; use its locked dependencies and documented prere
 | `controller` | `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run test:e2e`. |
 | `admin` | `npm run check:architecture`, `npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run test:e2e`; infrastructure: `npm run typecheck:infra`. |
 | `design` | `npm run typecheck`, `npm run lint`, `npm test`, `npm run build-storybook`, plus affected consuming apps. |
-| `service` | `npm run typecheck`, `npx tsc --noEmit -p tsconfig.infra.json`, `npm test`, `npm run test:integration` with DynamoDB Local per README. Full deploy CI also checks all shared-stack sources. |
+| `service` | `npm run typecheck`, `npx tsc --noEmit -p tsconfig.infra.json`, `npm test`, `npm run test:integration` with DynamoDB Local per README. Its source CI owns these checks; deployment reuses source CI for every checked-out commit. |
 | `server` | `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test --workspace --all-features --locked`; client/schema/integration/process checks from `docs/development.md` and `.github/workflows/ci.yml`. |
 | `research` | `just check`; policy changes add a small protocol match; publishing uses `just notebook`, `just check`, `just site-check`. Live/billable experiments need their own authorized scope. |
 | `arena` | `npm run typecheck`, `npm test`, `npm run verify`. No paid model calls needed for these checks. |
 | `competitor` | `npm run validate`, `npm run lint`, `npm run build`. |
 | `scripts` | `python3 -m unittest discover -s tests -v`; workspace harness: `python3 sync-agent-harness.py --check`. |
 
-Local file dependencies require sibling directories with their original names. Install the service package before design and consuming apps. Use each README for toolchains, browser prerequisites, local services, and generated SST types. A green PR policy check validates delivery metadata, not application behavior; several applications run their full build suite only in deployment workflows.
+Local file dependencies require sibling directories with their original names. Install the service package before design and consuming apps. Use each README for toolchains, browser prerequisites, local services, and generated SST types. A green PR policy check validates delivery metadata, not application behavior.
+
+Source repositories run their own CI on dev/main pushes and ordinary PRs. Deployment owners wait for successful source CI for their exact selected commits, pin those commits, then package and smoke-test the deployed applications. They do not repeat sibling test suites. Design's browser-backed `npm test` is intentionally agent-run: run it automatically when validating UI changes, with the affected consuming app browser checks. Do not omit it because hosted CI no longer runs it. CI still typechecks, lints, and builds Storybook. See `scripts/docs/ci-and-deployment.md` in the workspace for ownership and rollout details.
