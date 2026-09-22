@@ -304,3 +304,35 @@ async fn automatic_expert_takeover_occurs_after_two_minutes_plus_thirty_seconds_
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn host_can_choose_each_builtin_strength_and_former_player_loses_control() {
+    for resolution in [
+        DisconnectResolution::Easy,
+        DisconnectResolution::Medium,
+        DisconnectResolution::Hard,
+        DisconnectResolution::Expert,
+    ] {
+        let h = Harness::new().await;
+        h.start().await;
+        disconnect(&h, 1, 1000).await;
+        resolve(&h, 0, 1, 1000, 121000, resolution).await.unwrap();
+        let room = h.room().await;
+        assert_eq!(room.members[1].policy(), resolution.computer_policy());
+        assert_eq!(
+            h.service
+                .view(&h.id, "player-1")
+                .await
+                .unwrap()
+                .game
+                .unwrap()
+                .seat,
+            None
+        );
+        let view = h.service.view(&h.id, "player-0").await.unwrap();
+        assert!(view.members[1].connected);
+        h.service.flush_archive().await.unwrap();
+        let replay = reducer::replay(&h.archive.read(&h.id).await.unwrap()).unwrap();
+        assert_eq!(replay.members[1].resolution, Some(resolution));
+    }
+}

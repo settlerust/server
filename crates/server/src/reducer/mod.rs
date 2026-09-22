@@ -73,6 +73,7 @@ pub fn create(
             idle: false,
             disconnected_at_ms: None,
             resolution: None,
+            computer_policy: None,
         }],
         display_names: Default::default(),
         game: None,
@@ -148,14 +149,13 @@ fn reduce_version(
             let member = room
                 .members
                 .iter_mut()
-                .find(|m| {
-                    m.seat == Some(*seat) && m.resolution == Some(DisconnectResolution::Expert)
-                })
+                .find(|m| m.seat == Some(*seat) && m.policy().is_some())
                 .ok_or_else(|| {
                     Error::new(ErrorCode::Conflict, "computer no longer controls this seat")
                 })?;
             let identity = member.identity.clone();
-            member.resolution = None;
+            let resolution = member.resolution.take();
+            let policy = member.computer_policy.take();
             if request.expected_version != room.version {
                 return Err(Error::conflict(room.version));
             }
@@ -169,7 +169,8 @@ fn reduce_version(
                 engine_version,
             )?;
             if let Some(member) = room.members.iter_mut().find(|m| m.seat == Some(*seat)) {
-                member.resolution = Some(DisconnectResolution::Expert);
+                member.resolution = resolution;
+                member.computer_policy = policy;
             }
         }
         Input::DisplayName { identity, revision } => {
@@ -213,7 +214,7 @@ fn reduce_version(
             }
         }
         Input::Admission { identity, request } => {
-            admission::update(&mut room, identity, request)?;
+            admission::update(&mut room, identity, request, &mut public)?;
             public.push(PublicEvent::AdmissionChanged);
         }
         Input::Command { identity, request } => {
@@ -384,7 +385,7 @@ fn command(
     }
     if room
         .member(&identity.subject)
-        .is_some_and(|m| m.resolution.is_some())
+        .is_some_and(|m| m.resolution.is_some() || m.computer_policy.is_some())
         && !matches!(command, Command::ResolveDisconnect { .. })
     {
         return Err(Error::new(

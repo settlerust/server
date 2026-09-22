@@ -16,6 +16,16 @@ pub struct Member {
     pub disconnected_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<DisconnectResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_policy: Option<ComputerPolicy>,
+}
+impl Member {
+    pub fn policy(&self) -> Option<ComputerPolicy> {
+        self.computer_policy.or_else(|| {
+            self.resolution
+                .and_then(DisconnectResolution::computer_policy)
+        })
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredReceipt {
@@ -94,10 +104,7 @@ impl Room {
             connected_players: self
                 .members
                 .iter()
-                .filter(|m| {
-                    m.seat.is_some()
-                        && (m.connected || m.resolution == Some(DisconnectResolution::Expert))
-                })
+                .filter(|m| m.seat.is_some() && (m.connected || m.policy().is_some()))
                 .count() as u8,
             finished: self
                 .game

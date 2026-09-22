@@ -229,3 +229,36 @@ worker; its selected command is committed with the original observed version.
 Deploy this server before the corresponding lobby client. The new client sends
 activity frames and resolution commands; old clients continue to connect, but do
 not display the new host decision modal.
+
+## Built-in computer seats
+
+The admission update accepts an optional `computers` list of `{ subject, name,
+policy }`, with each subject also present in `players`. Only the host admission
+grant can configure these seats before play. Existing human seats cannot be
+converted through admission. Built-ins are ready and connected in the public
+projection, need no JWT or socket, and never acquire disconnect clocks.
+
+| Policy | Search depth | Time limit | Transition budget | Evaluator |
+| --- | --- | --- | --- | --- |
+| `easy` | 2 | 1 second | 400,000 | Hand heuristic |
+| `medium` | 3 | 4 seconds | 1,200,000 | Hand heuristic |
+| `hard` | 4 | 12 seconds | 4,000,000 | Hand heuristic |
+| `expert` | 3 | 4 seconds | 1,200,000 | Frozen n-tuple tables |
+
+These match the browser strengths. Each decision runs on a blocking worker with
+an ordinary redacted seat view, decision-local caching, and version-fenced commit
+through `ComputerCommand`. Durable records contain the chosen command; replay
+never reruns search. The bundled Expert model requires no external download.
+`tests/computers.rs` covers all four policies, startup without connections,
+admission fences, rejected external control, durable decisions, and restart.
+
+Hosts may choose any of these strengths through `resolve_disconnect` after the
+existing two-minute recovery window. The automatic outcome remains Expert after
+30 more seconds. The former player's hand and command privileges remain revoked.
+
+Before this addition, only Expert disconnect takeover ran within the server.
+Lobby Balanced and Random seats were separate credentialed worker tasks; normal
+expectimax seats used external native processes or browser workers. New hosted
+games accept only the four strengths above. Historical worker records remain
+readable so existing games can finish. Deploy server support before publishing
+the service and lobby consumers of the new admission fields.

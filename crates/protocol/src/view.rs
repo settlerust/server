@@ -10,6 +10,8 @@ pub struct MemberView {
     pub disconnected_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<crate::DisconnectResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_policy: Option<crate::ComputerPolicy>,
     pub seat: Option<u8>,
     pub name: String,
     pub connected: bool,

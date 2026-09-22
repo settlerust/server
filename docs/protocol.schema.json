@@ -357,6 +357,12 @@
       "description": "Control-plane admission fence. Accepted only from an external host grant.",
       "type": "object",
       "properties": {
+        "computers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComputerSeat"
+          }
+        },
         "players": {
           "type": "array",
           "items": {
@@ -909,6 +915,36 @@
         "intent"
       ]
     },
+    "ComputerPolicy": {
+      "description": "Built-in policies run inside the authoritative server on redacted seat observations.",
+      "type": "string",
+      "enum": [
+        "easy",
+        "medium",
+        "hard",
+        "expert"
+      ]
+    },
+    "ComputerSeat": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "policy": {
+          "$ref": "#/$defs/ComputerPolicy"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "subject",
+        "name",
+        "policy"
+      ]
+    },
     "CreateGame": {
       "type": "object",
       "properties": {
@@ -1003,6 +1039,9 @@
       "type": "string",
       "enum": [
         "retire",
+        "easy",
+        "medium",
+        "hard",
         "expert"
       ]
     },
@@ -1881,6 +1920,16 @@
     "MemberView": {
       "type": "object",
       "properties": {
+        "computer_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComputerPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "connected": {
           "type": "boolean"
         },

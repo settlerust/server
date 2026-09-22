@@ -230,6 +230,7 @@ pub(super) async fn run(
                 for subject in room
                     .members
                     .iter()
+                    .filter(|m| m.computer_policy.is_none())
                     .filter(|m| {
                         (m.seat.is_some()
                             && !m.connected
@@ -262,11 +263,11 @@ pub(super) async fn run(
                 }
                 if result.is_ok()
                     && computer.is_none()
-                    && let Some((seat, view)) = super::expert::next_view(&room)
+                    && let Some((seat, policy, view)) = super::expert::next_view(&room)
                 {
                     let offered_turn = offered.get(&seat).copied();
                     computer = Some(tokio::task::spawn_blocking(move || {
-                        super::expert::choose(seat, view, offered_turn)
+                        super::expert::choose(seat, policy, view, offered_turn)
                     }));
                 }
                 let _ = reply.send(result);
@@ -313,6 +314,7 @@ async fn expire(
         && room.members.iter().any(|m| {
             !m.connected
                 && m.resolution.is_none()
+                && m.computer_policy.is_none()
                 && m.seat.is_some()
                 && m.disconnected_at_ms
                     .is_some_and(|at| now >= at.saturating_add(150_000))

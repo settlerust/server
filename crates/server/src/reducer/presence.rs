@@ -99,7 +99,7 @@ pub(super) fn expire(room: &mut Room, now: u64, events: &mut Vec<PublicEvent>) -
     let expired: Vec<_> = room
         .members
         .iter()
-        .filter(|m| !m.connected && m.resolution.is_none())
+        .filter(|m| !m.connected && m.resolution.is_none() && m.computer_policy.is_none())
         .filter_map(|m| m.seat.zip(m.disconnected_at_ms))
         .filter(|(_, at)| now >= at.saturating_add(150_000))
         .collect();

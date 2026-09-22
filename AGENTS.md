@@ -10,6 +10,8 @@ This is the `server` repository in the Settlers workspace. Read [.agents/rules/p
 - Dev builds use dependency `dev` branches; production uses `main`. Validate the actual deployment owner's run and endpoint, not merely a dispatch job. Merge compatible upstream changes before consumers.
 - For implementation/PR work, read [.agents/skills/settlers-change/SKILL.md](.agents/skills/settlers-change/SKILL.md). For release work, read [.agents/skills/settlers-release/SKILL.md](.agents/skills/settlers-release/SKILL.md).
 
+- For logo, favicon, or app-icon work, read [.agents/skills/settlers-logo/SKILL.md](.agents/skills/settlers-logo/SKILL.md). Register new logo consumers in that skill and its exporter.
+
 These rules and skills are portable copies maintained in `settlerust/scripts` under `agent-harness/`. In the sibling workspace, regenerate with `python3 ../scripts/sync-agent-harness.py --write`; preserve the repository-specific instructions below.
 <!-- END SETTLERS HARNESS -->
 
