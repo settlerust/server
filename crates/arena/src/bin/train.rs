@@ -16,6 +16,13 @@
 //! STOPPING: the game budget, the wall budget, a file named STOP in --out, or the plateau
 //! rule (window W: the mean margin of the last W validation points is not above the mean of
 //! the W before them, once at least --plateau-min-points points exist).
+//!
+//! POPULATION: by default every seat is the learner. `--init PATH` warm-starts the tables from
+//! a file (and sets --warmup-games to 0 unless given), and `--pool SPEC` draws the four seats of
+//! every game by weight from a population of `self` (the learner), `frozen=PATH` (tables that
+//! never learn, planning at depth 1 over their own file exactly as the learner does), `eta`,
+//! and `fast` (the arena's builders), redrawing until at least one seat is the learner. Only
+//! the learner's seats collect afterstates and update the tables.
 use settlers_arena::seats::search_seat;
 use settlers_arena::{SeatSpec, TableSettings, build_seat, play};
 use settlers_engine::*;
@@ -23,6 +30,8 @@ use settlers_expectimax::ntuple::{Layout, MAX_ACTIVE, Model, UpdateStats};
 use settlers_expectimax::v2::{
     Cache, CacheMode, Leaf, LeafConfig, SearchConfig, opponent, rank_state_with,
 };
+use settlers_policies::{Policy, eta_builder::EtaBuilder, fast_builder::FastBuilder};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
@@ -58,8 +67,14 @@ struct Config {
     plateau_window: usize,
     plateau_min_points: usize,
     scale: f64,
+    init: Option<PathBuf>,
+    pool: Option<Pool>,
+    layout_explicit: bool,
 }
 fn parse_args() -> Result<Config, String> {
+    parse_args_from(&std::env::args().collect::<Vec<_>>())
+}
+fn parse_args_from(args: &[String]) -> Result<Config, String> {
     let mut c = Config {
         layout: "hex,vertex,portfolio".into(),
         out: PathBuf::new(),
@@ -89,8 +104,11 @@ fn parse_args() -> Result<Config, String> {
         plateau_window: 0,
         plateau_min_points: 6,
         scale: 1000.0,
+        init: None,
+        pool: None,
+        layout_explicit: false,
     };
-    let args: Vec<String> = std::env::args().collect();
+    let mut warmup_explicit = false;
     let mut i = 1;
     while i < args.len() {
         let flag = args[i].as_str();
@@ -118,7 +136,10 @@ fn parse_args() -> Result<Config, String> {
             .ok_or(format!("{flag} needs a value"))?;
         let bad = |what: &str| format!("bad {what}: {value}");
         match flag {
-            "--layout" => c.layout = value.to_string(),
+            "--layout" => {
+                c.layout = value.to_string();
+                c.layout_explicit = true;
+            }
             "--out" => c.out = PathBuf::from(value),
             "--threads" => c.threads = value.parse().map_err(|_| bad(flag))?,
             "--games" => c.games = value.parse().map_err(|_| bad(flag))?,
@@ -130,7 +151,10 @@ fn parse_args() -> Result<Config, String> {
             "--clamp" => c.clamp = value.parse().map_err(|_| bad(flag))?,
             "--epsilon" => c.epsilon = value.parse().map_err(|_| bad(flag))?,
             "--point-reward" => c.point_reward = value.parse().map_err(|_| bad(flag))?,
-            "--warmup-games" => c.warmup_games = value.parse().map_err(|_| bad(flag))?,
+            "--warmup-games" => {
+                c.warmup_games = value.parse().map_err(|_| bad(flag))?;
+                warmup_explicit = true;
+            }
             "--builder-mix" => c.builder_mix = value.parse().map_err(|_| bad(flag))?,
             "--seeds-start" => c.seeds_start = value.parse().map_err(|_| bad(flag))?,
             "--seeds-count" => c.seeds_count = value.parse().map_err(|_| bad(flag))?,
@@ -145,12 +169,19 @@ fn parse_args() -> Result<Config, String> {
                 c.plateau_min_points = value.parse().map_err(|_| bad(flag))?
             }
             "--scale" => c.scale = value.parse().map_err(|_| bad(flag))?,
+            "--init" => c.init = Some(PathBuf::from(value)),
+            "--pool" => c.pool = Some(Pool::parse(value)?),
             other => return Err(format!("unknown argument {other}")),
         }
         i += 2;
     }
     if c.out.as_os_str().is_empty() {
         return Err("--out is required".into());
+    }
+    // Warm-started tables already come from finished games, so the builder warm-up is off
+    // unless asked for.
+    if c.init.is_some() && !warmup_explicit {
+        c.warmup_games = 0;
     }
     if c.seeds_count == 0 || c.chunk_games == 0 {
         return Err("--seeds-count and --chunk-games must be positive".into());
@@ -161,7 +192,7 @@ fn parse_args() -> Result<Config, String> {
     Ok(c)
 }
 fn config_json(c: &Config, layout: &Layout) -> serde_json::Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "format": "settlers-ntuple-train-config-v1",
         "layout": layout.spec(), "entries": layout.total_entries(), "active_per_position": layout.active_count(),
         "threads": c.threads, "games": c.games, "chunk_games": c.chunk_games, "wall_seconds": c.wall_seconds,
@@ -173,7 +204,160 @@ fn config_json(c: &Config, layout: &Layout) -> serde_json::Value {
         "plateau_window": c.plateau_window, "plateau_min_points": c.plateau_min_points, "checkpoint": c.checkpoint,
         "target": "win indicator (1 winner, 0 otherwise; capped games 0 for all) plus point_reward per point gained",
         "policy": "expectimax-v2 turn planner at depth 1 with the tables as the leaf, on the true state; no proposals; the first warmup_games are played by the builder for every seat, and builder_mix is the per-decision probability of a builder move afterwards",
-    })
+    });
+    if let Some(init) = &c.init {
+        value["init"] = serde_json::Value::String(init.display().to_string());
+    }
+    if let Some(pool) = &c.pool {
+        value["pool"] = serde_json::Value::String(pool.spec.clone());
+        value["pool_policy"] = serde_json::Value::String(
+            "each game draws four seats from the pool by weight, redrawn until at least one seat is the learner; only the learner's seats collect afterstates and update the tables; frozen seats plan at depth 1 over their own tables exactly as the learner does; eta and fast seats are the arena's builders".into(),
+        );
+    }
+    value
+}
+
+/// Who sits in a training seat: the learner, a frozen table file (by index), or a builder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SeatKind {
+    Learner,
+    Frozen(usize),
+    Eta,
+    Fast,
+}
+#[derive(Clone, Debug, PartialEq)]
+enum PoolKind {
+    Learner,
+    Frozen { path: PathBuf, index: usize },
+    Eta,
+    Fast,
+}
+#[derive(Clone, Debug, PartialEq)]
+struct PoolEntry {
+    kind: PoolKind,
+    weight: f64,
+    label: String,
+}
+/// A population of training partners: `kind[:weight]` entries separated by commas, with kinds
+/// `self`, `frozen=PATH`, `eta`, and `fast`. Weights default to 1. The learner must be present
+/// with a positive weight. Parsing does no I/O; `main` loads the frozen files in index order.
+#[derive(Clone, Debug, PartialEq)]
+struct Pool {
+    spec: String,
+    entries: Vec<PoolEntry>,
+}
+impl Pool {
+    fn parse(spec: &str) -> Result<Self, String> {
+        let mut entries = Vec::new();
+        let mut frozen = 0usize;
+        for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let (kind, weight) = item
+                .rsplit_once(':')
+                .and_then(|(kind, weight)| weight.parse::<f64>().ok().map(|w| (kind, w)))
+                .unwrap_or((item, 1.0));
+            if weight <= 0.0 || !weight.is_finite() {
+                return Err(format!("pool weight must be positive: {item}"));
+            }
+            let kind = match kind {
+                "self" => PoolKind::Learner,
+                "eta" => PoolKind::Eta,
+                "fast" => PoolKind::Fast,
+                other => match other.strip_prefix("frozen=") {
+                    Some(path) if !path.is_empty() => {
+                        frozen += 1;
+                        PoolKind::Frozen {
+                            path: PathBuf::from(path),
+                            index: frozen - 1,
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "unknown pool kind {other} (self, frozen=PATH, eta, fast)"
+                        ));
+                    }
+                },
+            };
+            entries.push(PoolEntry {
+                kind,
+                weight,
+                label: String::new(),
+            });
+        }
+        if !entries.iter().any(|e| matches!(e.kind, PoolKind::Learner)) {
+            return Err("the pool needs a self entry".into());
+        }
+        for entry in &mut entries {
+            entry.label = match &entry.kind {
+                PoolKind::Learner => "self".into(),
+                PoolKind::Eta => "eta".into(),
+                PoolKind::Fast => "fast".into(),
+                PoolKind::Frozen { index, .. } if frozen > 1 => format!("frozen#{}", index + 1),
+                PoolKind::Frozen { .. } => "frozen".into(),
+            };
+        }
+        Ok(Self {
+            spec: spec.to_string(),
+            entries,
+        })
+    }
+    fn frozen_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<(usize, PathBuf)> = self
+            .entries
+            .iter()
+            .filter_map(|e| match &e.kind {
+                PoolKind::Frozen { path, index } => Some((*index, path.clone())),
+                _ => None,
+            })
+            .collect();
+        paths.sort_by_key(|(index, _)| *index);
+        paths.into_iter().map(|(_, path)| path).collect()
+    }
+    fn pick(&self, rng: &mut Rng, total: f64) -> usize {
+        let mut r = rng.unit() * total;
+        for (i, e) in self.entries.iter().enumerate() {
+            if r < e.weight {
+                return i;
+            }
+            r -= e.weight;
+        }
+        self.entries.len() - 1
+    }
+    /// Four pool entries drawn by weight, redrawn until one of them is the learner.
+    fn draw(&self, rng: &mut Rng) -> [usize; 4] {
+        let total: f64 = self.entries.iter().map(|e| e.weight).sum();
+        let is_learner = |i: &usize| matches!(self.entries[*i].kind, PoolKind::Learner);
+        for _ in 0..4096 {
+            let picks: [usize; 4] = std::array::from_fn(|_| self.pick(rng, total));
+            if picks.iter().any(is_learner) {
+                return picks;
+            }
+        }
+        // Unreachable in practice with a learner of positive weight; seat it once at random.
+        let mut picks: [usize; 4] = std::array::from_fn(|_| self.pick(rng, total));
+        let learner = self
+            .entries
+            .iter()
+            .position(|e| e.kind == PoolKind::Learner);
+        picks[rng.below(4)] = learner.unwrap_or(0);
+        picks
+    }
+    fn kinds(&self, picks: &[usize; 4]) -> [SeatKind; 4] {
+        picks.map(|i| match &self.entries[i].kind {
+            PoolKind::Learner => SeatKind::Learner,
+            PoolKind::Frozen { index, .. } => SeatKind::Frozen(*index),
+            PoolKind::Eta => SeatKind::Eta,
+            PoolKind::Fast => SeatKind::Fast,
+        })
+    }
+    /// The sorted labels of a draw joined by `+`, the key of the composition histogram.
+    fn composition(&self, picks: &[usize; 4]) -> String {
+        let mut labels: Vec<&str> = picks
+            .iter()
+            .map(|&i| self.entries[i].label.as_str())
+            .collect();
+        labels.sort_unstable();
+        labels.join("+")
+    }
 }
 
 /// Small deterministic generator for exploration and tie-breaking (SplitMix64).
@@ -212,11 +396,47 @@ struct GameStats {
     winner_points: u64,
     updates: UpdateStats,
     wins: [u64; 4],
+    learner_seats: u64,
+    learner_wins: u64,
+    compositions: BTreeMap<String, u64>,
 }
 /// One seat's chain of afterstates: feature indices, own points at each, and the prediction.
 struct Chain {
     features: Vec<u32>,
     points: Vec<u8>,
+}
+/// The planner's move for a seat over `leaf`: the best depth-1 line, ties broken at random,
+/// an epsilon-random candidate when exploring. None when the search has nothing to rank.
+#[allow(clippy::too_many_arguments)]
+fn plan_action(
+    s: &State,
+    p: u8,
+    search: &SearchConfig,
+    leaf: &Leaf,
+    cache: &mut Cache,
+    c: &Config,
+    rng: &mut Rng,
+    stats: &mut GameStats,
+) -> Option<Action> {
+    match rank_state_with(s, p, search, leaf, 1, cache) {
+        Ok(ranked) if !ranked.is_empty() => {
+            if ranked.len() > 1 {
+                stats.searched += 1;
+            }
+            if c.epsilon > 0.0 && rng.unit() < c.epsilon {
+                Some(ranked[rng.below(ranked.len())].0)
+            } else {
+                let best = ranked.iter().map(|r| r.1).fold(f64::NEG_INFINITY, f64::max);
+                let ties: Vec<Action> = ranked
+                    .iter()
+                    .filter(|r| r.1 >= best - 1e-9)
+                    .map(|r| r.0)
+                    .collect();
+                Some(ties[rng.below(ties.len())])
+            }
+        }
+        _ => None,
+    }
 }
 #[allow(clippy::too_many_arguments)]
 fn play_training_game(
@@ -228,6 +448,8 @@ fn play_training_game(
     builder: bool,
     rng: &mut Rng,
     stats: &mut GameStats,
+    seats: &[SeatKind; 4],
+    frozen: &[Leaf],
 ) {
     let mut bytes = [0u8; 32];
     bytes[..4].copy_from_slice(&seed.to_le_bytes());
@@ -247,6 +469,11 @@ fn play_training_game(
     // Each seat keeps its transposition tables across the decisions of a turn; on the fully
     // known training state this is bit-identical to a fresh search and saves the replanning.
     let mut caches: [Cache; 4] = Default::default();
+    let mut builders: [Option<Box<dyn Policy>>; 4] = std::array::from_fn(|q| match seats[q] {
+        SeatKind::Eta => Some(Box::new(EtaBuilder) as Box<dyn Policy>),
+        SeatKind::Fast => Some(Box::new(FastBuilder) as Box<dyn Policy>),
+        _ => None,
+    });
     let mut scratch = [0u32; MAX_ACTIVE];
     let mut steps = 0u32;
     let mut turn_key = (u32::MAX, 0u8);
@@ -264,29 +491,28 @@ fn play_training_game(
         }
         let p = actor(&s);
         stats.decisions += 1;
+        let planner = match seats[p as usize] {
+            SeatKind::Learner => Some(leaf),
+            SeatKind::Frozen(i) => Some(&frozen[i]),
+            SeatKind::Eta | SeatKind::Fast => None,
+        };
         let action = if turn_actions >= 40 && s.phase == Phase::Main {
             Action::EndTurn
         } else if builder || (c.builder_mix > 0.0 && rng.unit() < c.builder_mix) {
             opponent::act(&s, p, turn_actions)
-        } else {
-            match rank_state_with(&s, p, search, leaf, 1, &mut caches[p as usize]) {
-                Ok(ranked) if !ranked.is_empty() => {
-                    if ranked.len() > 1 {
-                        stats.searched += 1;
-                    }
-                    if c.epsilon > 0.0 && rng.unit() < c.epsilon {
-                        ranked[rng.below(ranked.len())].0
-                    } else {
-                        let best = ranked.iter().map(|r| r.1).fold(f64::NEG_INFINITY, f64::max);
-                        let ties: Vec<Action> = ranked
-                            .iter()
-                            .filter(|r| r.1 >= best - 1e-9)
-                            .map(|r| r.0)
-                            .collect();
-                        ties[rng.below(ties.len())]
-                    }
-                }
-                _ => match s.phase {
+        } else if let Some(planner) = planner {
+            match plan_action(
+                &s,
+                p,
+                search,
+                planner,
+                &mut caches[p as usize],
+                c,
+                rng,
+                stats,
+            ) {
+                Some(a) => a,
+                None => match s.phase {
                     Phase::Main => Action::EndTurn,
                     Phase::Roll => Action::Roll,
                     Phase::Discard { .. } => Action::Discard {
@@ -298,6 +524,12 @@ fn play_training_game(
                     },
                 },
             }
+        } else {
+            // A builder seat decides from its redacted observation, as at the arena's table.
+            builders[p as usize]
+                .as_mut()
+                .and_then(|policy| policy.choose_action(&observe(&s, Some(p))))
+                .unwrap_or_else(|| opponent::act(&s, p, turn_actions))
         };
         let next = match apply(&s, p, action) {
             Ok(next) => next,
@@ -331,7 +563,7 @@ fn play_training_game(
                     continue;
                 }
                 pending[q] = false;
-                if finished || now == q as u8 {
+                if finished || now == q as u8 || seats[q] != SeatKind::Learner {
                     continue;
                 }
                 let count = model.features(&s, q as u8, &mut scratch);
@@ -349,9 +581,11 @@ fn play_training_game(
     stats.builder_games += u64::from(builder);
     stats.capped += u64::from(capped);
     stats.turns += u64::from(s.turn);
+    stats.learner_seats += seats.iter().filter(|&&k| k == SeatKind::Learner).count() as u64;
     if let Some(w) = winner {
         stats.wins[w as usize] += 1;
         stats.winner_points += u64::from(points(&s, w));
+        stats.learner_wins += u64::from(seats[w as usize] == SeatKind::Learner);
     }
     // Backward TD(lambda) over each seat's afterstate chain.
     for (q, chain) in chains.iter().enumerate() {
@@ -402,10 +636,15 @@ fn worker(
     chunk_end: u64,
     worker_index: usize,
     chunk_index: u64,
+    frozen: &[Arc<Model>],
 ) -> GameStats {
     // The leaf reads the live tables through the shared allocation; updates are visible to
     // every worker as they happen.
     let leaf = Leaf::tables(model.clone(), c.scale, 0.0);
+    let frozen_leaves: Vec<Leaf> = frozen
+        .iter()
+        .map(|m| Leaf::tables(m.clone(), c.scale, 0.0))
+        .collect();
     let search = SearchConfig {
         depth: 1,
         propose: false,
@@ -423,8 +662,34 @@ fn worker(
             .seeds_start
             .wrapping_add((index % u64::from(c.seeds_count)) as u32);
         let builder = index < c.warmup_games;
+        // The draw has its own generator keyed by the game index, so it depends on neither
+        // the thread count nor the exploration stream, and a pool of `self` alone leaves the
+        // games bit-identical to plain self-play.
+        let seats = match &c.pool {
+            Some(pool) => {
+                let mut draw_rng = Rng(u64::from(c.train_seed)
+                    ^ 0x706f_6f6c_5f64_7261
+                    ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+                let picks = pool.draw(&mut draw_rng);
+                *stats
+                    .compositions
+                    .entry(pool.composition(&picks))
+                    .or_default() += 1;
+                pool.kinds(&picks)
+            }
+            None => [SeatKind::Learner; 4],
+        };
         play_training_game(
-            model, &leaf, &search, c, seed, builder, &mut rng, &mut stats,
+            model,
+            &leaf,
+            &search,
+            c,
+            seed,
+            builder,
+            &mut rng,
+            &mut stats,
+            &seats,
+            &frozen_leaves,
         );
         shared.games.fetch_add(1, Relaxed);
     }
@@ -648,8 +913,33 @@ fn write_json(path: &std::path::Path, value: &serde_json::Value) -> Result<(), S
 }
 
 fn main() -> Result<(), String> {
-    let c = parse_args()?;
+    let mut c = parse_args()?;
+    // A warm start takes its layout from the file; an explicit --layout must agree.
+    let init_model = match &c.init {
+        Some(path) => {
+            let model = Model::load(path, true)?;
+            let spec = model.layout.spec();
+            if c.layout_explicit && Layout::parse(&c.layout)?.spec() != spec {
+                return Err(format!(
+                    "--layout {} differs from the layout {spec} of --init",
+                    c.layout
+                ));
+            }
+            c.layout = spec;
+            Some(model)
+        }
+        None => None,
+    };
+    let c = c;
     let layout = Layout::parse(&c.layout)?;
+    let frozen: Vec<Arc<Model>> = match &c.pool {
+        Some(pool) => pool
+            .frozen_paths()
+            .iter()
+            .map(|path| Model::load(path, false).map(Arc::new))
+            .collect::<Result<_, _>>()?,
+        None => Vec::new(),
+    };
     std::fs::create_dir_all(&c.out).map_err(|e| e.to_string())?;
     let config_path = c.out.join("config.json");
     let config_value = config_json(&c, &layout);
@@ -705,6 +995,16 @@ fn main() -> Result<(), String> {
         }
         eprintln!("resuming at chunk {chunk_index}, {games_total} games");
         Arc::new(Model::load(&checkpoint_path, true)?)
+    } else if let Some(model) = init_model {
+        eprintln!(
+            "starting from {} (fingerprint {:016x})",
+            c.init
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default(),
+            model.fingerprint()
+        );
+        Arc::new(model)
     } else {
         Arc::new(Model::new(layout, c.optimistic, true))
     };
@@ -742,7 +1042,8 @@ fn main() -> Result<(), String> {
                     let model = &model;
                     let c = &c;
                     let shared = &shared;
-                    scope.spawn(move || worker(model, c, shared, chunk_end, w, chunk_index))
+                    let frozen = &frozen;
+                    scope.spawn(move || worker(model, c, shared, chunk_end, w, chunk_index, frozen))
                 })
                 .collect();
             handles
@@ -766,6 +1067,11 @@ fn main() -> Result<(), String> {
             total.updates.beta_sum += s.updates.beta_sum;
             for i in 0..4 {
                 total.wins[i] += s.wins[i];
+            }
+            total.learner_seats += s.learner_seats;
+            total.learner_wins += s.learner_wins;
+            for (composition, n) in s.compositions {
+                *total.compositions.entry(composition).or_default() += n;
             }
         }
         games_total = shared.games.load(Relaxed);
@@ -821,6 +1127,8 @@ fn main() -> Result<(), String> {
             "afterstates_per_game": total.afterstates as f64 / g,
             "winner_points": total.winner_points as f64 / (total.games - total.capped).max(1) as f64,
             "wins_by_seat": total.wins,
+            "learner_seats": total.learner_seats, "learner_wins": total.learner_wins,
+            "compositions": total.compositions,
             "mean_abs_delta": total.updates.abs_delta_sum / total.updates.updates.max(1) as f64,
             "mean_beta": total.updates.beta_sum / total.updates.entry_updates.max(1) as f64,
             "updates": total.updates.updates, "entry_updates": total.updates.entry_updates,
@@ -862,4 +1170,165 @@ fn main() -> Result<(), String> {
     std::fs::write(c.out.join("DONE"), b"").map_err(|e| e.to_string())?;
     eprintln!("stopped: {stop_reason} after {games_total} games");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(extra: &[&str]) -> Vec<String> {
+        [
+            "train",
+            "--out",
+            "unused",
+            "--layout",
+            "portfolio",
+            "--turn-cap",
+            "10",
+            "--seeds-start",
+            "77",
+            "--seeds-count",
+            "1000",
+            "--threads",
+            "1",
+        ]
+        .iter()
+        .chain(extra.iter())
+        .map(|s| s.to_string())
+        .collect()
+    }
+    fn fresh(c: &Config) -> Arc<Model> {
+        Arc::new(Model::new(
+            Layout::parse(&c.layout).expect("layout"),
+            c.optimistic,
+            true,
+        ))
+    }
+    /// One worker's games from a fresh model: the trained fingerprint and the chunk statistics.
+    fn train(c: &Config, frozen: &[Arc<Model>], games: u64) -> (u64, GameStats) {
+        let model = fresh(c);
+        let shared = Shared {
+            games: AtomicU64::new(0),
+            cursor: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+        };
+        let stats = worker(&model, c, &shared, games, 0, 0, frozen);
+        (model.fingerprint(), stats)
+    }
+
+    #[test]
+    fn pool_parse_reads_kinds_weights_and_labels() {
+        let pool = Pool::parse("self:2,frozen=/tmp/a.bin:1,eta:0.5,fast:0.5").expect("pool");
+        let kinds: Vec<(&str, f64)> = pool
+            .entries
+            .iter()
+            .map(|e| (e.label.as_str(), e.weight))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![("self", 2.0), ("frozen", 1.0), ("eta", 0.5), ("fast", 0.5)]
+        );
+        assert_eq!(pool.frozen_paths(), vec![PathBuf::from("/tmp/a.bin")]);
+        let two = Pool::parse("self,frozen=a.bin,frozen=b.bin:3").expect("pool");
+        assert_eq!(two.entries[1].label, "frozen#1");
+        assert_eq!(two.entries[2].label, "frozen#2");
+        assert_eq!(two.entries[2].weight, 3.0);
+        assert!(
+            Pool::parse("frozen=a.bin:3").is_err(),
+            "a pool needs the learner"
+        );
+        assert!(Pool::parse("self:0").is_err(), "weights are positive");
+        assert!(Pool::parse("self,other").is_err(), "kinds are fixed");
+        assert!(
+            Pool::parse("self,frozen=").is_err(),
+            "a frozen seat names a file"
+        );
+    }
+
+    #[test]
+    fn pool_draw_always_seats_the_learner() {
+        let pool = Pool::parse("self:1,frozen=a.bin:3").expect("pool");
+        let mut rng = Rng(12345);
+        let mut learners_seen = std::collections::BTreeSet::new();
+        for _ in 0..2000 {
+            let picks = pool.draw(&mut rng);
+            let kinds = pool.kinds(&picks);
+            let learners = kinds.iter().filter(|&&k| k == SeatKind::Learner).count();
+            assert!(learners >= 1);
+            learners_seen.insert(learners);
+            let composition = pool.composition(&picks);
+            assert_eq!(composition.matches("self").count(), learners);
+        }
+        assert!(learners_seen.contains(&1) && learners_seen.contains(&2));
+    }
+
+    #[test]
+    fn init_turns_the_builder_warmup_off_unless_given() {
+        let c = parse_args_from(&args(&["--init", "a.bin"])).expect("config");
+        assert_eq!(c.warmup_games, 0);
+        assert_eq!(c.init, Some(PathBuf::from("a.bin")));
+        let c =
+            parse_args_from(&args(&["--init", "a.bin", "--warmup-games", "7"])).expect("config");
+        assert_eq!(c.warmup_games, 7);
+        let c = parse_args_from(&args(&[])).expect("config");
+        assert_eq!(c.warmup_games, 20_000);
+        assert!(c.pool.is_none());
+    }
+
+    #[test]
+    fn pool_self_reproduces_plain_self_play_bit_for_bit() {
+        let mut plain = parse_args_from(&args(&[])).expect("config");
+        plain.warmup_games = 0;
+        let mut pooled = parse_args_from(&args(&["--pool", "self"])).expect("config");
+        pooled.warmup_games = 0;
+        let (a, sa) = train(&plain, &[], 2);
+        let (b, sb) = train(&pooled, &[], 2);
+        assert_eq!(a, b, "the same games and updates");
+        assert_eq!(
+            (sa.afterstates, sa.updates.updates),
+            (sb.afterstates, sb.updates.updates)
+        );
+        assert_eq!(sb.learner_seats, 8);
+        assert_eq!(sb.compositions.get("self+self+self+self"), Some(&2));
+        assert_ne!(a, fresh(&plain).fingerprint(), "the tables were updated");
+    }
+
+    #[test]
+    fn frozen_seats_never_learn() {
+        let mut c =
+            parse_args_from(&args(&["--pool", "self:1,frozen=unused.bin:3"])).expect("config");
+        c.warmup_games = 0;
+        let frozen =
+            Arc::new(Model::new(Layout::parse(&c.layout).expect("layout"), 0.5, true).snapshot());
+        assert!(!frozen.trainable());
+        let before = frozen.fingerprint();
+        let (learned, stats) = train(&c, std::slice::from_ref(&frozen), 3);
+        assert_eq!(
+            frozen.fingerprint(),
+            before,
+            "frozen tables are never updated"
+        );
+        assert!(
+            stats.learner_seats >= 3 && stats.learner_seats < 12,
+            "{}",
+            stats.learner_seats
+        );
+        assert!(
+            stats
+                .compositions
+                .keys()
+                .all(|k| k.contains("frozen") && k.contains("self"))
+        );
+        assert_ne!(learned, fresh(&c).fingerprint(), "the learner was updated");
+    }
+
+    #[test]
+    fn builder_seats_play_from_their_observation() {
+        let mut c = parse_args_from(&args(&["--pool", "self:1,eta:1,fast:1"])).expect("config");
+        c.warmup_games = 0;
+        let (learned, stats) = train(&c, &[], 2);
+        assert_eq!(stats.games, 2);
+        assert!(stats.learner_seats >= 2 && stats.learner_seats <= 8);
+        assert_ne!(learned, fresh(&c).fingerprint());
+    }
 }

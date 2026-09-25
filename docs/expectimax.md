@@ -572,6 +572,21 @@ cargo run --release -p settlers-arena --bin train -- \
   --chunk-games 40000 --validate-seeds 32 --plateau-window 3
 ```
 
+Training against a population. By default every seat is the learner (self-play).
+`--init PATH` warm-starts the tables from a file, takes the layout from that file,
+and turns the builder warm-up off unless `--warmup-games` is given. `--pool SPEC`
+draws the four seats of every game by weight from a population written as
+comma-separated `kind[:weight]` entries with kinds `self` (the learner),
+`frozen=PATH` (tables that never learn), `eta`, and `fast` (the arena's
+builders); a draw without the learner is redrawn, so `--pool self` is plain
+self-play bit for bit. Frozen seats plan at depth 1 over their own tables
+exactly as the learner does over its; builder seats decide from their redacted
+observation. Only the learner's seats collect afterstates and update the
+tables. `config.json` records `init` and `pool`, and every `progress.jsonl` row
+counts the learner's seats and wins and the games per seat composition. Example:
+`--init tables.bin --pool self:1,frozen=tables.bin:3 --games 40000` trains a
+best response to the frozen tables from the tables themselves.
+
 ### Transposition tables
 
 Positions are keyed by the root seat's information set: everything its
