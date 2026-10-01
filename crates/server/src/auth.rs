@@ -97,7 +97,7 @@ impl Auth {
         let mut auth = Self {
             secret: secret.into(),
             providers: BTreeMap::new(),
-            ttl: 7 * 86400,
+            ttl: crate::managed_auth::MAX_TOKEN_LIFETIME,
             external: None,
         };
         if guests {

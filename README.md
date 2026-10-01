@@ -94,7 +94,8 @@ disabled. The public `/healthz` endpoint reports readiness without game data.
 
 External JWTs use RS256 and audience `settlers-v1`, with `iss`, `sub`, `name`, `iat`,
 `nbf`, `exp`, `server_id`, `game_id`, and `role` (`host`, `player`, or `spectator`). Their maximum
-lifetime is one hour. Tokens must match this server and the requested game; both HTTP and WebSocket
+lifetime is 30 days. Locally issued game JWTs also last 30 days. Tokens must match
+this server and the requested game; both HTTP and WebSocket
 commands enforce their role. External hosts cannot change game settings after
 admission. The lobby issuer is responsible for admitting players and selecting the
 host before signing grants. POST `/v1/games` creates the assigned UUID once and

@@ -97,7 +97,7 @@ fn external_tokens_cannot_be_minted_and_are_bound_to_issuer_game_and_expiry() {
             ..valid.clone()
         },
         Grant {
-            exp: 4000,
+            exp: valid.iat + 30 * 86400 + 1,
             ..valid.clone()
         },
     ] {
@@ -109,6 +109,28 @@ fn external_tokens_cannot_be_minted_and_are_bound_to_issuer_game_and_expiry() {
         .unwrap();
     assert!(auth.verify(&local.token, 101).is_err());
     assert!(auth.verify(&(token(&valid) + "a"), 101).is_err());
+}
+#[test]
+fn external_tokens_remain_valid_for_thirty_days_on_assigned_and_shared_servers() {
+    let server_id = uuid::Uuid::new_v4().to_string();
+    let mut valid = grant(ID, Role::Player, 100);
+    valid.exp = valid.iat + 30 * 86400;
+    valid.server_id = Some(server_id.clone());
+    for auth in [
+        Auth::verification_only(PUBLIC, "https://example.test", ID).unwrap(),
+        Auth::verification_for_server(PUBLIC, "https://example.test", &server_id).unwrap(),
+    ] {
+        let signed = token(&valid);
+        for time in [valid.iat + 3601, valid.iat + 86400, valid.exp - 1] {
+            assert_eq!(auth.verify(&signed, time).unwrap(), identity(0));
+        }
+        assert!(auth.verify(&signed, valid.exp).is_err());
+        let too_long = Grant {
+            exp: valid.exp + 1,
+            ..valid.clone()
+        };
+        assert!(auth.verify(&token(&too_long), valid.iat).is_err());
+    }
 }
 #[tokio::test]
 async fn shared_server_hosts_distinct_games_but_rejects_cross_game_and_cross_server_grants() {

@@ -7,12 +7,19 @@ fn signed_tokens_expire_and_survive_authenticator_restart() {
         name: "Bot".into(),
     };
     let token = auth.issue(&identity, 100).unwrap();
+    assert_eq!(token.expires_at, 100 + 30 * 86400);
     let restarted = Auth::new(vec![42; 32], true).unwrap();
     assert_eq!(
         restarted.verify(&token.token, 101).unwrap().subject,
         identity.subject
     );
     assert!(restarted.verify(&token.token, token.expires_at).is_err());
+    assert_eq!(
+        restarted
+            .verify(&token.token, token.expires_at - 1)
+            .unwrap(),
+        identity
+    );
     assert!(restarted.verify(&token.token, 99).is_err());
     let renewed = restarted.issue(&identity, 200).unwrap();
     assert_eq!(renewed.subject, token.subject);
