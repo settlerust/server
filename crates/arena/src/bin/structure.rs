@@ -41,6 +41,7 @@ fn view(s: &State, seat: u8, version: u64) -> GameView {
         host: false,
         members: (0..s.settings.players)
             .map(|i| MemberView {
+                computer_policy: None,
                 idle: false,
                 disconnected_at_ms: None,
                 resolution: None,

@@ -616,6 +616,20 @@ or the values; it records positions the search would have discarded, so it
 costs memory and is off by default. The arena's `--trace` output carries the
 outcomes for every recorded decision.
 
+#### Per-decision trace from a seated process
+
+The `remote` runner's expectimax seat (`crates/policies/src/expectimax.rs`) writes one
+JSON line per decision to stderr when the environment variable `SETTLERS_SEARCH_TRACE`
+is set to anything other than empty or `0`: the evaluator (`policy`, which reads
+`expectimax-v2-tables` whenever learned tables are the leaf, blended or not), the
+snapshot version, turn and phase, the legal and root action counts, the number of
+candidates, `depth_completed`, the search time and the whole decision's wall time in
+milliseconds, whether a budget aborted a depth pass, and the own-node and transition
+counts. The variable is unset by default, the trace reads the finished report and never
+changes a decision, and the research harness keeps each seat's stderr in that game's
+private policy log, so a protocol cohort can report completed-depth shares and
+decision-time distributions for its remote seats without exposing anything public.
+
 ### Browser defaults
 
 Seated browser workers request the tunable search with a depth cap of 3, a

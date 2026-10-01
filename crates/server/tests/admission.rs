@@ -19,6 +19,7 @@ async fn removed_seats_stay_revoked_after_retries_restart_and_replay() {
     )
     .await;
     let update = AdmissionUpdate {
+        computers: vec![],
         revision: 3,
         players: vec![identity(0).subject, identity(2).subject],
     };
@@ -34,6 +35,7 @@ async fn removed_seats_stay_revoked_after_retries_restart_and_replay() {
     assert_eq!(h.room().await.version, version);
     assert!(h.room().await.member(&identity(1).subject).is_none());
     let stale = AdmissionUpdate {
+        computers: vec![],
         revision: 2,
         players: vec![identity(0).subject, identity(1).subject],
     };
@@ -101,6 +103,7 @@ async fn admission_cannot_evict_a_started_game_and_removed_opening_is_reset() {
             &h.id,
             identity(0),
             AdmissionUpdate {
+                computers: vec![],
                 revision: 1,
                 players: (0..3).map(|p| identity(p).subject).collect(),
             },
@@ -114,6 +117,7 @@ async fn admission_cannot_evict_a_started_game_and_removed_opening_is_reset() {
             &h.id,
             identity(0),
             AdmissionUpdate {
+                computers: vec![],
                 revision: 2,
                 players: (0..4).map(|p| identity(p).subject).collect(),
             },
@@ -137,6 +141,7 @@ async fn admission_cannot_evict_a_started_game_and_removed_opening_is_reset() {
                 &h.id,
                 identity(0),
                 AdmissionUpdate {
+                    computers: vec![],
                     revision: 3,
                     players: vec![identity(0).subject]
                 },

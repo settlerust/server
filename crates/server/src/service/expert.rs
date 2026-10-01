@@ -1,4 +1,4 @@
-//! Hosted replacement policy receives only its own ordinary, redacted seat view.
+//! Built-in server policy receives only its own ordinary, redacted seat view.
 use crate::{
     error::{Error, Result},
     model::Room,
@@ -34,7 +34,7 @@ fn leaf() -> Result<Leaf> {
         .map_err(Error::storage)?;
     Ok(Leaf::tables(Arc::clone(model), 1000.0, 0.0))
 }
-pub(super) fn next_view(room: &Room) -> Option<(u8, GameView)> {
+pub(super) fn next_view(room: &Room) -> Option<(u8, ComputerPolicy, GameView)> {
     let game = room.game.as_ref()?;
     if matches!(game.phase, Phase::Finished { .. }) {
         return None;
@@ -43,30 +43,44 @@ pub(super) fn next_view(room: &Room) -> Option<(u8, GameView)> {
         let Some(seat) = member.seat else {
             continue;
         };
-        if member.resolution != Some(DisconnectResolution::Expert) {
+        let Some(policy) = member.policy() else {
             continue;
-        }
+        };
         let mut own = room.clone();
-        own.members
-            .iter_mut()
-            .find(|m| m.seat == Some(seat))?
-            .resolution = None;
+        let own_member = own.members.iter_mut().find(|m| m.seat == Some(seat))?;
+        own_member.resolution = None;
+        own_member.computer_policy = None;
         let view = reducer::view(&own, &member.identity.subject).ok()?;
         if view
             .game
             .as_ref()
             .is_some_and(|g| !g.legal_actions.is_empty())
         {
-            return Some((seat, view));
+            return Some((seat, policy, view));
         }
     }
     None
 }
-pub(super) fn choose(seat: u8, view: GameView, offered_turn: Option<u32>) -> Decision {
+pub(super) fn choose(
+    seat: u8,
+    policy: ComputerPolicy,
+    view: GameView,
+    offered_turn: Option<u32>,
+) -> Decision {
+    let (depth, time_budget_ms, node_budget) = match policy {
+        ComputerPolicy::Easy => (2, 1000.0, 400_000),
+        ComputerPolicy::Medium | ComputerPolicy::Expert => (3, 4000.0, 1_200_000),
+        ComputerPolicy::Hard => (4, 12000.0, 4_000_000),
+    };
+    let evaluator = if policy == ComputerPolicy::Expert {
+        leaf()?
+    } else {
+        Leaf::Hand
+    };
     let config = SearchConfig {
-        depth: 3,
-        time_budget_ms: 4000.0,
-        node_budget: 1_200_000,
+        depth,
+        time_budget_ms,
+        node_budget,
         cache: CacheMode::Decision,
         deepen_fraction: 1.0,
         ..SearchConfig::default()
@@ -78,7 +92,7 @@ pub(super) fn choose(seat: u8, view: GameView, offered_turn: Option<u32>) -> Dec
         &config,
         offered_turn,
         &|| started.elapsed().as_secs_f64() * 1000.0,
-        &leaf()?,
+        &evaluator,
         &mut Cache::default(),
     )
     .map_err(Error::storage)?;
@@ -86,7 +100,12 @@ pub(super) fn choose(seat: u8, view: GameView, offered_turn: Option<u32>) -> Dec
         .candidates
         .into_iter()
         .find_map(|candidate| candidate.command)
-        .ok_or_else(|| Error::new(ErrorCode::Internal, "Expert did not return a decision"))?;
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::Internal,
+                "Built-in computer did not return a decision",
+            )
+        })?;
     Ok((
         seat,
         CommandRequest {

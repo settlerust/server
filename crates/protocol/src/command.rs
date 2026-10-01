@@ -40,7 +40,38 @@ fn yes() -> bool {
 #[serde(rename_all = "snake_case")]
 pub enum DisconnectResolution {
     Retire,
+    Easy,
+    Medium,
+    Hard,
     Expert,
+}
+
+/// Built-in policies run inside the authoritative server on redacted seat observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ComputerPolicy {
+    Easy,
+    Medium,
+    Hard,
+    Expert,
+}
+impl DisconnectResolution {
+    pub fn computer_policy(self) -> Option<ComputerPolicy> {
+        match self {
+            Self::Retire => None,
+            Self::Easy => Some(ComputerPolicy::Easy),
+            Self::Medium => Some(ComputerPolicy::Medium),
+            Self::Hard => Some(ComputerPolicy::Hard),
+            Self::Expert => Some(ComputerPolicy::Expert),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ComputerSeat {
+    pub subject: String,
+    pub name: String,
+    pub policy: ComputerPolicy,
 }
 
 /// Control-plane admission fence. Accepted only from an external host grant.
@@ -49,6 +80,8 @@ pub enum DisconnectResolution {
 pub struct AdmissionUpdate {
     pub revision: u64,
     pub players: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub computers: Vec<ComputerSeat>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

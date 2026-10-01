@@ -92,6 +92,7 @@ async fn current_privacy_redacts_snapshots_live_batches_and_archived_history_aft
             &h.id,
             identity(0),
             AdmissionUpdate {
+                computers: vec![],
                 revision: 1,
                 players: vec!["player-0".into()],
             },

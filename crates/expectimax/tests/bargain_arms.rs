@@ -63,6 +63,7 @@ fn named_view(s: &State, history: &[EventBatch], seat: u8, offers: Vec<TradeOffe
     let mut view = common::view(s, seat, history.len() as u64);
     view.members = (0..4)
         .map(|i| MemberView {
+            computer_policy: None,
             idle: false,
             disconnected_at_ms: None,
             resolution: None,

@@ -216,6 +216,7 @@ impl Table {
                 .iter()
                 .enumerate()
                 .map(|(i, label)| MemberView {
+                    computer_policy: None,
                     idle: false,
                     disconnected_at_ms: None,
                     resolution: None,

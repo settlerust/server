@@ -63,6 +63,7 @@ pub(super) fn join(
         idle: false,
         disconnected_at_ms: None,
         resolution: None,
+        computer_policy: None,
     });
     events.push(PublicEvent::Joined {
         seat,
@@ -97,9 +98,9 @@ fn can_start(
     }
     if require_ready
         && !ready_decided
-        && players
-            .iter()
-            .any(|m| m.resolution.is_none() && (!m.ready || !m.connected))
+        && players.iter().any(|m| {
+            m.resolution.is_none() && m.computer_policy.is_none() && (!m.ready || !m.connected)
+        })
     {
         return Err(Error::new(
             ErrorCode::Conflict,

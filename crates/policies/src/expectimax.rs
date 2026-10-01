@@ -1,11 +1,15 @@
 //! Remote seat for both expectimax searches. Decisions use only the seated view and the
 //! participant event history delivered to this process.
 use crate::Policy;
-use settlers_engine::{Action, Observation};
+use settlers_engine::{Action, Observation, Phase};
 use settlers_expectimax::v2::{Cache, SearchConfig};
-use settlers_expectimax::{Config, Report};
+use settlers_expectimax::{Config, Report, Statistics};
 use settlers_protocol::{Command, EventBatch, GameView, PublicEvent};
 use std::collections::BTreeMap;
+
+/// Environment variable that turns on one JSON line per decision on stderr (see
+/// [`search_trace`]). Unset, empty, or `0` leaves the seat silent.
+pub const TRACE_VARIABLE: &str = "SETTLERS_SEARCH_TRACE";
 
 enum Engine {
     Reference(Config),
@@ -17,6 +21,7 @@ pub struct ExpectimaxSeat {
     history: BTreeMap<u64, EventBatch>,
     offered_turn: Option<u32>,
     name: &'static str,
+    trace: bool,
 }
 impl ExpectimaxSeat {
     /// `v1`, `v2`, `v1:{json}`, or `v2:{json}`.
@@ -46,6 +51,8 @@ impl ExpectimaxSeat {
             cache: Cache::default(),
             history: BTreeMap::new(),
             offered_turn: None,
+            trace: std::env::var_os(TRACE_VARIABLE)
+                .is_some_and(|value| !value.is_empty() && value != "0"),
         })
     }
     fn analyze(&mut self, view: &GameView) -> Result<Report, settlers_expectimax::SearchError> {
@@ -70,6 +77,42 @@ impl ExpectimaxSeat {
         }
     }
 }
+/// One JSON object describing a decision for the seat's private diagnostic log: the
+/// evaluator (`expectimax-v2-tables` when learned tables are the leaf), the snapshot
+/// version, turn and phase, the legal and root action counts, the number of candidates, the
+/// deepest completed depth, the search time and the whole decision's wall time in
+/// milliseconds, whether a budget aborted a depth pass, and the own-node and transition
+/// counts. It reads the report and never changes the decision.
+pub fn search_trace(
+    policy: &str,
+    version: u64,
+    turn: u32,
+    phase: &Phase,
+    candidates: usize,
+    statistics: &Statistics,
+    wall_ms: f64,
+) -> serde_json::Value {
+    let phase = serde_json::to_value(phase)
+        .ok()
+        .and_then(|value| value.get("type").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "trace": "search",
+        "policy": policy,
+        "version": version,
+        "turn": turn,
+        "phase": phase,
+        "legal_actions": statistics.legal_actions,
+        "root_actions": statistics.root_actions,
+        "candidates": candidates,
+        "depth_completed": statistics.depth_completed,
+        "time_ms": statistics.time_ms,
+        "wall_ms": wall_ms,
+        "aborted": statistics.aborted,
+        "own_nodes": statistics.own_nodes,
+        "transitions": statistics.transitions,
+    })
+}
 impl Policy for ExpectimaxSeat {
     fn name(&self) -> &'static str {
         self.name
@@ -93,8 +136,26 @@ impl Policy for ExpectimaxSeat {
         if o.legal_actions.is_empty() && !has_offer {
             return None;
         }
+        let started = std::time::Instant::now();
         match self.analyze(view) {
-            Ok(report) => report.candidates.into_iter().next().and_then(|c| c.command),
+            Ok(report) => {
+                if self.trace {
+                    let wall_ms = started.elapsed().as_secs_f64() * 1000.0;
+                    eprintln!(
+                        "{}",
+                        search_trace(
+                            &report.policy,
+                            report.version,
+                            o.turn,
+                            &o.phase,
+                            report.candidates.len(),
+                            &report.statistics,
+                            wall_ms,
+                        )
+                    );
+                }
+                report.candidates.into_iter().next().and_then(|c| c.command)
+            }
             Err(error) => {
                 eprintln!("expectimax fallback: {error}");
                 o.legal_actions

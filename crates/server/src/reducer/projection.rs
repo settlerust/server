@@ -17,9 +17,10 @@ pub fn view(room: &Room, subject: &str) -> Result<GameView> {
             "join as a player or spectator first",
         ));
     }
-    let seat = room
-        .seat(subject)
-        .filter(|_| room.member(subject).is_some_and(|m| m.resolution.is_none()));
+    let seat = room.seat(subject).filter(|_| {
+        room.member(subject)
+            .is_some_and(|m| m.resolution.is_none() && m.computer_policy.is_none())
+    });
     Ok(GameView {
         id: room.id.clone(),
         name: room.name.clone(),
@@ -48,9 +49,10 @@ pub fn view(room: &Room, subject: &str) -> Result<GameView> {
                 idle: m.idle,
                 disconnected_at_ms: m.disconnected_at_ms,
                 resolution: m.resolution,
+                computer_policy: m.computer_policy,
                 name: display_name(room, &m.identity.subject, &m.identity.name),
-                connected: m.connected || m.resolution == Some(DisconnectResolution::Expert),
-                ready: m.ready || m.resolution.is_some(),
+                connected: m.connected || m.policy().is_some(),
+                ready: m.ready || m.resolution.is_some() || m.computer_policy.is_some(),
                 is_you: m.identity.subject == subject,
             })
             .collect(),
@@ -100,9 +102,10 @@ pub fn batch(room: &Room, subject: &str, record: &Record) -> Result<EventBatch> 
             "join before reading event history",
         ));
     }
-    let seat = room
-        .seat(subject)
-        .filter(|_| room.member(subject).is_some_and(|m| m.resolution.is_none()));
+    let seat = room.seat(subject).filter(|_| {
+        room.member(subject)
+            .is_some_and(|m| m.resolution.is_none() && m.computer_policy.is_none())
+    });
     let events = record
         .public
         .iter()
