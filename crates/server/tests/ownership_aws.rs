@@ -17,13 +17,15 @@ use settlers_protocol::*;
 use std::sync::Arc;
 
 #[tokio::test]
-#[ignore = "requires isolated DynamoDB Local on 127.0.0.1:5801"]
+#[ignore = "requires DynamoDB Local; set SETTLERS_TEST_DYNAMODB_URL"]
 async fn ownership_manifest_restores_only_assigned_games_and_fences_old_actors() {
+    let endpoint = std::env::var("SETTLERS_TEST_DYNAMODB_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:5801".into());
     let config = aws_sdk_dynamodb::config::Builder::new()
         .behavior_version_latest()
         .region(Region::new("us-east-1"))
         .credentials_provider(Credentials::new("test", "test", None, None, "test"))
-        .endpoint_url("http://127.0.0.1:5801")
+        .endpoint_url(endpoint)
         .build();
     let db = Client::from_conf(config);
     let table = format!("ownership-test-{}", uuid::Uuid::new_v4());

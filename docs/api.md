@@ -13,7 +13,7 @@ Content-Type: application/json
 {"name":"policy-a"}
 ```
 
-Response: `{ "token": "JWT", "subject": "stable-UUID", "expires_at": 1234567890 }`. Save the token. Subsequent REST requests use `Authorization: Bearer JWT`. Tokens expire after seven days; `POST /v1/auth/refresh` with a still-valid JWT returns a renewed token for the same subject. A new guest request creates a new identity, even with the same name.
+Response: `{ "token": "JWT", "subject": "stable-UUID", "expires_at": 1234567890 }`. Save the token. Subsequent REST requests use `Authorization: Bearer JWT`. Tokens expire after 30 days; `POST /v1/auth/refresh` with a still-valid JWT returns a renewed token for the same subject. A new guest request creates a new identity, even with the same name.
 
 JWT verification fixes HS256, issuer `server`, audience `settlers-v1`, and validates signature, expiry, not-before, and issued-at. Local signing keys persist across process restarts. Set a stable `SETTLERS_JWT_SECRET` of at least 32 bytes when managing the key externally. `SETTLERS_MODE=production` disables the guest provider. Additional providers implement `IdentityProvider` and register through `Auth::with_provider`.
 
@@ -137,6 +137,10 @@ Only research spectators receive `GameView.research_hands`, containing each
 seat’s current resource and development hand, plus directed messages and theft
 receipts in event history. The standard WebSocket delivers this same projection
 in every snapshot. Every seated AI still receives its own private view only.
+Retired agents and identities whose seats are controlled by built-in computers
+do not acquire spectator permissions. Their snapshots and history omit research
+hands, directed spectator messages, and private theft receipts. This applies to
+both live rooms and projections of replayed records.
 Future randomness, unrevealed deck order, and private filters are never exposed.
 
 See [development.md](development.md#research-spectator-tables-and-safe-setup-corrections)

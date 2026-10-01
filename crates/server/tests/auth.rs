@@ -1,4 +1,86 @@
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, Mac};
 use server::auth::{Auth, Identity};
+use sha2::Sha256;
+
+fn sign(header: serde_json::Value, claims: serde_json::Value) -> String {
+    let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header).unwrap());
+    let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+    let signed = format!("{header}.{claims}");
+    let mut mac = Hmac::<Sha256>::new_from_slice(&[42; 32]).unwrap();
+    mac.update(signed.as_bytes());
+    format!(
+        "{signed}.{}",
+        URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+    )
+}
+
+fn claims() -> serde_json::Value {
+    serde_json::json!({
+        "iss": "server", "aud": "settlers-v1", "sub": "player", "name": "Agent",
+        "iat": 100, "nbf": 100, "exp": 200,
+    })
+}
+
+#[test]
+fn malformed_token_segments_and_oversized_tokens_are_rejected_without_echoing_tokens() {
+    let auth = Auth::new(vec![42; 32], true).unwrap();
+    let valid = sign(serde_json::json!({"alg":"HS256","typ":"JWT"}), claims());
+    for token in [
+        "".to_owned(),
+        "one-part".to_owned(),
+        "a.b".to_owned(),
+        "..".to_owned(),
+        "a.b.c.d".to_owned(),
+        format!("{valid}.extra"),
+        "a".repeat(8193),
+    ] {
+        let error = auth.verify(&token, 100).unwrap_err();
+        assert_eq!(error.0.code, settlers_protocol::ErrorCode::Unauthorized);
+        assert_eq!(error.0.message, "invalid or expired authentication token");
+    }
+}
+
+#[test]
+fn valid_signatures_do_not_bypass_header_and_claim_validation() {
+    let auth = Auth::new(vec![42; 32], true).unwrap();
+    let header = serde_json::json!({"alg":"HS256","typ":"JWT"});
+    for bad_header in [
+        serde_json::json!({"alg":"none","typ":"JWT"}),
+        serde_json::json!({"alg":"RS256","typ":"JWT"}),
+        serde_json::json!({"alg":"HS256","typ":"other"}),
+        serde_json::json!({"alg":"HS256","typ":"JWT","unexpected":true}),
+    ] {
+        assert!(auth.verify(&sign(bad_header, claims()), 100).is_err());
+    }
+    for (field, value) in [
+        ("iss", serde_json::json!("other")),
+        ("aud", serde_json::json!("other")),
+        ("sub", serde_json::json!("")),
+        ("sub", serde_json::json!("a".repeat(201))),
+        ("iat", serde_json::json!(101)),
+        ("nbf", serde_json::json!(101)),
+        ("exp", serde_json::json!(100)),
+        ("unexpected", serde_json::json!(true)),
+    ] {
+        let mut claims = claims();
+        claims[field] = value;
+        assert!(
+            auth.verify(&sign(header.clone(), claims), 100).is_err(),
+            "accepted invalid {field}"
+        );
+    }
+}
+
+#[test]
+fn tokens_are_valid_from_not_before_inclusive_until_expiry_exclusive() {
+    let auth = Auth::new(vec![42; 32], true).unwrap();
+    let token = sign(serde_json::json!({"alg":"HS256","typ":"JWT"}), claims());
+    assert!(auth.verify(&token, 99).is_err());
+    assert!(auth.verify(&token, 100).is_ok());
+    assert!(auth.verify(&token, 199).is_ok());
+    assert!(auth.verify(&token, 200).is_err());
+}
 #[test]
 fn signed_tokens_expire_and_survive_authenticator_restart() {
     let auth = Auth::new(vec![42; 32], true).unwrap();

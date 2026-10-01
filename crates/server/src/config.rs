@@ -13,17 +13,37 @@ pub fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
 }
+/// Process configuration; local mode uses durable credentials in `data_dir`.
 pub struct Config {
     pub bind: SocketAddr,
     pub data_dir: PathBuf,
     pub aws: bool,
     pub local: bool,
 }
+
+#[derive(Default)]
+struct ConfigInput {
+    mode: Option<String>,
+    bind: Option<String>,
+    storage: Option<String>,
+    data_dir: Option<PathBuf>,
+}
+
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let local = match std::env::var("SETTLERS_MODE").as_deref() {
-            Ok("production") => false,
-            Ok("local") | Err(_) => true,
+        Self::parse(ConfigInput {
+            mode: std::env::var("SETTLERS_MODE").ok(),
+            bind: std::env::var("SETTLERS_BIND").ok(),
+            storage: std::env::var("SETTLERS_STORAGE").ok(),
+            data_dir: std::env::var_os("SETTLERS_DATA_DIR").map(PathBuf::from),
+        })
+    }
+
+    // Parsing is separate from environment access so validation needs no global mutation.
+    fn parse(input: ConfigInput) -> Result<Self> {
+        let local = match input.mode.as_deref() {
+            Some("production") => false,
+            Some("local") | None => true,
             _ => {
                 return Err(Error::new(
                     ErrorCode::InvalidRequest,
@@ -31,12 +51,14 @@ impl Config {
                 ));
             }
         };
-        let bind = std::env::var("SETTLERS_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:8080".into())
+        let bind = input
+            .bind
+            .as_deref()
+            .unwrap_or("127.0.0.1:8080")
             .parse()
             .map_err(|_| Error::new(ErrorCode::InvalidRequest, "invalid SETTLERS_BIND"))?;
-        let aws = std::env::var("SETTLERS_STORAGE").unwrap_or_else(|_| "local".into());
-        if aws != "aws" && aws != "local" {
+        let storage = input.storage.as_deref().unwrap_or("local");
+        if storage != "aws" && storage != "local" {
             return Err(Error::new(
                 ErrorCode::InvalidRequest,
                 "SETTLERS_STORAGE must be local or aws",
@@ -44,9 +66,8 @@ impl Config {
         }
         Ok(Self {
             bind,
-            data_dir: std::env::var_os("SETTLERS_DATA_DIR")
-                .map_or_else(|| PathBuf::from("data"), PathBuf::from),
-            aws: aws == "aws",
+            data_dir: input.data_dir.unwrap_or_else(|| PathBuf::from("data")),
+            aws: storage == "aws",
             local,
         })
     }
@@ -72,6 +93,10 @@ impl Config {
         Auth::new(secret, self.local)
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/config/mod.rs"]
+mod tests;
 fn local_key(dir: &Path) -> Result<Vec<u8>> {
     use std::io::Write;
     std::fs::create_dir_all(dir).map_err(Error::storage)?;

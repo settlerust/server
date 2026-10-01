@@ -1,6 +1,6 @@
 # Development and validation
 
-Use Rust 1.96+, Node 24 for TypeScript tests, Python 3.11+, and Terraform 1.5+. AWS SDK crates are behind `--features aws`; the default server runs entirely locally. Dependencies are locked in Cargo/npm/Terraform lock files. All handwritten test code is in separate test directories.
+Use Rust 1.96+, Node 24 for TypeScript tests, Python 3.11+, and Terraform 1.5+. AWS SDK crates are behind `--features aws`; the default server runs entirely locally. Dependencies are locked in Cargo/npm/Terraform lock files. Most handwritten tests live in each crate's separate test directory; a few evaluation helpers retain inline unit tests.
 
 ```sh
 cargo fmt --all --check
@@ -45,6 +45,55 @@ The generator rejects unsupported schema shapes. TypeScript uses discriminated u
 
 The suite includes geometry and exhaustive bit packing, setup order and distance/connection rules, production shortages, robber/discard choices, all development cards and timing, piece limits, road trails, awards, win timing, hidden views, deterministic replay, full two/three/four-player policy games, a durable ten-point game, JWT tampering/expiry/refresh, authenticated HTTP and WebSocket behavior, half-open sockets, multiple sockets per seat, reconnect grace, simultaneous trade acceptance, auto-reject/shadow filtering, private messages, stale writes, ambiguous commits, archive lag, pagination, and DynamoDB transactions.
 
+`engine/tests/transition_invariants.rs` checks every advertised action in sampled
+two-, three-, and four-player games, in both random modes, against inventory
+conservation and the recorded transition. It also exhausts out-of-range seat,
+vertex, edge, and robber IDs. `server/tests/local_storage.rs` covers transaction
+rollback, outbox capacity and recovery, full-record archive retry equality,
+corrupt archive files, and path validation. Research visibility tests cover retired
+and replaced agents: losing control of a seat never grants research spectator
+access, including when projecting replayed records.
+
+`server/tests/config/mod.rs` tests configuration parsing without mutating the
+process environment. It checks defaults, explicit settings, invalid values,
+durable signing-key reuse, Unix key permissions, and preservation of invalid
+existing keys and paths.
+
+CI runs the two DynamoDB integration targets explicitly against a disposable
+local instance; ownership fencing is included, rather than left ignored:
+
+```sh
+SETTLERS_TEST_DYNAMODB_URL=http://127.0.0.1:18000 \
+  cargo test -p server --features aws --test aws --test ownership_aws --locked -- --ignored
+```
+
+These checks exercise behavior and sampled invariants; they are not a measured
+line or branch coverage percentage. To measure Rust coverage on a machine with
+`cargo-llvm-cov` and the `llvm-tools-preview` toolchain component:
+
+```sh
+cargo llvm-cov --workspace --all-features --locked --html
+```
+
+The ordinary coverage command excludes ignored local-service tests. Run those
+with their endpoint configured when measuring the AWS paths. Review uncovered
+error paths and compatibility branches before setting a coverage threshold.
+
+The secret-scan workflow scans reachable Git history with a pinned Gitleaks
+release. Its only private-key exception is the documented public test fixture.
+Run the same scan locally after installing that release:
+
+```sh
+gitleaks git . --log-opts=--all --redact --no-banner
+```
+
+The security workflow also checks all feature dependencies against RustSec with
+`cargo-deny`. After installing the workflow's pinned version, run:
+
+```sh
+cargo deny --all-features --locked check advisories
+```
+
 Failure-injection adapters test both pre-commit failure and a successful commit whose acknowledgment is lost. Archive tests distinguish accepted delivery from S3 read-back. Replays verify the complete room hash after every record, including metadata and communication settings, not just board occupancy.
 
 ## Real processes and cross-language clients
@@ -85,7 +134,7 @@ Use the vendored [Rust skill](../.agents/skills/rust-best-practices/SKILL.md) an
 
 `roll_for_order` is an optional host-only lobby command after all seats are occupied. It persists public `OpeningRoll` values and clockwise `Opening.order` in `GameView.opening`, emitting `order_decided`. Only tied highest rollers reroll. It does not create a game or a turn deadline; `start` begins setup using the recorded winner and advances the private RNG past those rolls. Configure and reroll requests are rejected once order is fixed. The legacy `start` path stays unchanged for historical replay compatibility; absent opening state is omitted from stored room JSON.
 
-The `remote` binary wraps its selected builder policy with a trade proposer. It offers one surplus card for one missing target resource, at most once per turn, using only its redacted view. `SETTLERS_HUMAN_SEAT` can prioritize a seated human, `SETTLERS_MOVE_DELAY_MS` paces moves (0–5000 ms), and `SETTLERS_TRADE_WAIT_MS` keeps an offer open before continuing (0–30000 ms). Defaults remain zero for CLI benchmark runs. The web launcher supplies human-friendly timings.
+The `remote` binary wraps its selected builder policy with a trade proposer. It offers one surplus card for one missing target resource, at most once per turn, using only its redacted view. `SETTLERS_HUMAN_SEAT` can prioritize a seated human, `SETTLERS_MOVE_DELAY_MS` paces moves (0–5000 ms), and `SETTLERS_TRADE_WAIT_MS` keeps an offer open before continuing (0–30000 ms). Defaults are zero for CLI benchmark runs.
 
 ## Timed, staged discards
 
@@ -94,7 +143,7 @@ timed play. Untimed games keep `GameView.deadline_ms` null through setup, turns,
 presence changes, discards, and restoration. An untimed `DiscardView` uses
 `deadline_ms: 0`; clients must keep its controls enabled and omit its countdown.
 Trade offers may still have their own explicit expiry independently of the turn.
-Staged discards introduced archive engine version `base-v2`; current transitions use `base-v8`. Replay retains the `base-v1` deadline and timeout behavior for older records. A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
+Staged discards introduced archive engine version `base-v2`; current transitions use `base-v9`. Replay retains the `base-v1` deadline and timeout behavior for older records. A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
 
 The owning `GameView.discard` contains the round `id`, fixed `required` count, editable `draft`, confirmed `locked` cards, and `deadline_ms`. It is absent for spectators and only contains the recipient's choices. Send `select_discard { discard_id, resources }` to replace the draft, then `confirm_discard { discard_id }` to lock it. Multiple confirmations may fill the quota. These commands tolerate other seats advancing the room version but require the exact active round ID. Receipts remain idempotent. Confirmed cards cannot be removed, and the engine applies one exact discard when the quota is complete. The legacy `act/discard` command still works for agents; it must include previously locked cards.
 
@@ -114,7 +163,7 @@ ordinary spectators, and research spectators.
 
 `CreateGame.player_name` optionally names the seated host without changing their JWT subject. Omission preserves the JWT display name and historical serialization. The host may leave seats open: authenticated visitors read the public unstarted lobby, then explicitly `join` as a player or spectator. A host calls `roll_for_order` only when all seats are occupied, then `start`. Started games require membership before reads; a new spectator can join using the current version from a conflict response. Game IDs are identifiers, never credentials.
 
-`GameSummary.connected_players` counts currently connected seated members, excluding spectators. Lobby clients can distinguish active tables from saved games awaiting reconnection. It reveals no private game state. A development web host can run a separate four-process exhibition when no table is active; its host credentials stay local to that process.
+`GameSummary.connected_players` counts currently connected seated members, excluding spectators. Clients can distinguish active tables from saved games awaiting reconnection. It reveals no private game state.
 
 ## Research spectator tables and safe setup corrections
 
@@ -131,18 +180,15 @@ cards. Research spectators also receive theft receipts and directed messages.
 Seated AI identities continue to receive their own hand and filtered events only;
 `research_hands` is absent for every seated identity and for standard spectators.
 No projection exposes the seed, RNG, future development deck, or private filters.
-`GameSummary.research` identifies these rooms in discovery lists. The native arena,
-research Python harness, and browser all-AI launcher opt in explicitly. Clients
-watch games on their configured server through `/game/<gameId>`; a game ID does
-not provide authentication or connect to a different server automatically.
+`GameSummary.research` identifies these rooms in discovery lists. The native arena
+and research Python harness opt in explicitly. A game ID does not provide
+authentication or connect a client to a different server automatically.
 
 During `setup_road`, the active player may send
 `act { action: { type: "relocate_settlement", vertex } }`. This moves only the
 settlement just placed, until its connecting road is confirmed. Second-round
 starting resources are returned and recalculated from the new location atomically;
 the deadline does not reset. `setup_settlement_moved` describes the correction.
-Normal placements confirm on pointer release over the pressed target; movement or
-leaving the target cancels. Keyboard choices confirm on keyup and blur cancels.
 
 ## Atomic trade replacement
 
@@ -195,12 +241,7 @@ The envelope includes the game ID, winner, schema version and
 `source: "local-unverified"`. Records retain their inputs, public events, engine
 version, sequence and state hash for replay and future research.
 
-The settlers.dev browser app exports its saved WASM checkpoint when the victory
-screen appears and sends it to its own completed-game archive. This export does
-not use the hosted game fleet or confer hosted karma. Browser checkpoint restore
-keeps the remaining turn and trade durations; closing the tab pauses local play.
-
-## Hosted name privacy checks
+## Identity name privacy checks
 
 `tests/name_privacy.rs` verifies legacy redaction, current-name history projection,
 stale revision rejection, departed members, archival replay and restart.
@@ -219,16 +260,11 @@ Expert execution, and replay/restart. Engine `tests/retirement.rs` checks conser
 occupancy, production, setup, turn order, discards and last-player victory.
 
 The frozen Expert checkpoint is bundled in `crates/server/assets/expert.bin.gz`.
-Its source is the project's 96,093-game hex-portfolio-main research baseline; the
-raw SHA-256 is `f8e61e66e0279b0fe67f5f4d6be0ad3ca0a86617e91ed24fe08a34a997b46f0c`.
+Its raw SHA-256 is `f8e61e66e0279b0fe67f5f4d6be0ad3ca0a86617e91ed24fe08a34a997b46f0c`.
 The loader verifies the digest and never silently substitutes another evaluator.
 Native hosted search uses depth 3, a 4-second limit and 1,200,000 transitions with
 decision-local caching. Only a redacted `GameView` crosses into the blocking policy
 worker; its selected command is committed with the original observed version.
-
-Deploy this server before the corresponding lobby client. The new client sends
-activity frames and resolution commands; old clients continue to connect, but do
-not display the new host decision modal.
 
 ## Built-in computer seats
 
@@ -245,7 +281,7 @@ projection, need no JWT or socket, and never acquire disconnect clocks.
 | `hard` | 4 | 12 seconds | 4,000,000 | Hand heuristic |
 | `expert` | 3 | 4 seconds | 1,200,000 | Frozen n-tuple tables |
 
-These match the browser strengths. Each decision runs on a blocking worker with
+Each decision runs on a blocking worker with
 an ordinary redacted seat view, decision-local caching, and version-fenced commit
 through `ComputerCommand`. Durable records contain the chosen command; replay
 never reruns search. The bundled Expert model requires no external download.
@@ -256,9 +292,5 @@ Hosts may choose any of these strengths through `resolve_disconnect` after the
 existing two-minute recovery window. The automatic outcome remains Expert after
 30 more seconds. The former player's hand and command privileges remain revoked.
 
-Before this addition, only Expert disconnect takeover ran within the server.
-Lobby Balanced and Random seats were separate credentialed worker tasks; normal
-expectimax seats used external native processes or browser workers. New hosted
-games accept only the four strengths above. Historical worker records remain
-readable so existing games can finish. Deploy server support before publishing
-the service and lobby consumers of the new admission fields.
+New games accept only the four built-in strengths above. Historical worker
+records remain readable so existing games can finish.

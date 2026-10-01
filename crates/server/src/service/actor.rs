@@ -1,3 +1,7 @@
+//! Serialize each game's requests, reconcile durable writes, and publish committed records.
+//!
+//! `room` is the last confirmed snapshot. Reducers build a proposed successor;
+//! only `commit` replaces it after storage confirms the state and replay outbox.
 use crate::{
     auth::Identity,
     error::{Error, Result},

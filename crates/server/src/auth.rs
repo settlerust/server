@@ -126,7 +126,7 @@ impl Auth {
         if self.external.is_some() {
             return Err(Error::new(
                 ErrorCode::Forbidden,
-                "tokens are issued by the external lobby service",
+                "tokens are issued by the external identity service",
             ));
         }
         let claims = Claims {
@@ -165,22 +165,22 @@ impl Auth {
         if token.len() > 8192 {
             return Err(invalid());
         }
-        let parts: Vec<_> = token.split('.').collect();
-        if parts.len() != 3 {
-            return Err(invalid());
-        }
-        let signature = URL_SAFE_NO_PAD.decode(parts[2]).map_err(|_| invalid())?;
+        let (header, rest) = token.split_once('.').ok_or_else(invalid)?;
+        let (payload, signature) = rest.split_once('.').ok_or_else(invalid)?;
+        let signature = URL_SAFE_NO_PAD.decode(signature).map_err(|_| invalid())?;
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.secret).map_err(|_| invalid())?;
-        mac.update(format!("{}.{}", parts[0], parts[1]).as_bytes());
+        mac.update(header.as_bytes());
+        mac.update(b".");
+        mac.update(payload.as_bytes());
         mac.verify_slice(&signature).map_err(|_| invalid())?;
         let header: Header =
-            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).map_err(|_| invalid())?)
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(header).map_err(|_| invalid())?)
                 .map_err(|_| invalid())?;
         if header.alg != "HS256" || header.typ != "JWT" {
             return Err(invalid());
         }
         let claims: Claims =
-            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).map_err(|_| invalid())?)
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).map_err(|_| invalid())?)
                 .map_err(|_| invalid())?;
         if claims.iss != "server"
             || claims.aud != "settlers-v1"

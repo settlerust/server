@@ -1,3 +1,4 @@
+//! Manage game actors, enforce process capacity, and route requests to their queues.
 mod actor;
 mod archive;
 mod expert;
@@ -12,6 +13,7 @@ use settlers_protocol::*;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 #[derive(Clone)]
+/// Shared handle to independently serialized games and their durable storage.
 pub struct GameService {
     inner: Arc<Inner>,
 }

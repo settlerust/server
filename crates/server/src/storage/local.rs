@@ -14,6 +14,24 @@ use std::{
 pub struct LocalStore {
     connection: Arc<Mutex<Connection>>,
 }
+
+const SCHEMA: &str = "
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = FULL;
+
+    CREATE TABLE IF NOT EXISTS games (
+        id TEXT PRIMARY KEY,
+        version INTEGER NOT NULL,
+        state TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS outbox (
+        game_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        PRIMARY KEY (game_id, sequence)
+    );
+";
+
 impl LocalStore {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
@@ -23,7 +41,7 @@ impl LocalStore {
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(Error::storage)?;
-        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, version INTEGER NOT NULL, state TEXT NOT NULL); CREATE TABLE IF NOT EXISTS outbox (game_id TEXT NOT NULL, sequence INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(game_id, sequence));").map_err(Error::storage)?;
+        connection.execute_batch(SCHEMA).map_err(Error::storage)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -72,16 +90,53 @@ impl Store for LocalStore {
         let version = i64::try_from(room.version).map_err(Error::storage)?;
         let state = serde_json::to_string(room).map_err(Error::storage)?;
         let event = serde_json::to_string(record).map_err(Error::storage)?;
-        self.run(move|c|{
-            let tx=c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(Error::storage)?;
-            let current:Option<i64>=tx.query_row("SELECT version FROM games WHERE id=?1",[&id],|r|r.get(0)).optional().map_err(Error::storage)?;
-            if current.unwrap_or(0) as u64!=expected{return Err(Error::conflict(current.unwrap_or(0) as u64));}
-            let pending:i64=tx.query_row("SELECT count(*) FROM outbox WHERE game_id=?1",[&id],|r|r.get(0)).map_err(Error::storage)?;
-            if pending>=super::OUTBOX_LIMIT as i64{return Err(Error::new(settlers_protocol::ErrorCode::Backpressure,"archive is behind; game is paused until pending events are delivered"));}
-            tx.execute("INSERT INTO games VALUES (?1,?2,?3) ON CONFLICT(id) DO UPDATE SET version=excluded.version,state=excluded.state",params![id,version,state]).map_err(Error::storage)?;
-            tx.execute("INSERT INTO outbox VALUES (?1,?2,?3)",params![id,version,event]).map_err(Error::storage)?;
-            tx.commit().map_err(Error::storage)
-        }).await
+        self.run(move |connection| {
+            // Reserve the write lock before checking the version and outbox capacity.
+            let transaction = connection
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+                .map_err(Error::storage)?;
+            let current: Option<i64> = transaction
+                .query_row("SELECT version FROM games WHERE id=?1", [&id], |row| {
+                    row.get(0)
+                })
+                .optional()
+                .map_err(Error::storage)?;
+            let current = current.unwrap_or(0) as u64;
+            if current != expected {
+                return Err(Error::conflict(current));
+            }
+            let pending: i64 = transaction
+                .query_row(
+                    "SELECT count(*) FROM outbox WHERE game_id=?1",
+                    [&id],
+                    |row| row.get(0),
+                )
+                .map_err(Error::storage)?;
+            if pending >= super::OUTBOX_LIMIT as i64 {
+                return Err(Error::new(
+                    settlers_protocol::ErrorCode::Backpressure,
+                    "archive is behind; game is paused until pending events are delivered",
+                ));
+            }
+
+            // Both writes roll back if either statement or the final commit fails.
+            transaction
+                .execute(
+                    "INSERT INTO games (id, version, state) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(id) DO UPDATE
+                     SET version=excluded.version, state=excluded.state",
+                    params![id, version, state],
+                )
+                .map_err(Error::storage)?;
+            transaction
+                .execute(
+                    "INSERT INTO outbox (game_id, sequence, event) VALUES (?1, ?2, ?3)",
+                    params![id, version, event],
+                )
+                .map_err(Error::storage)?;
+            transaction.commit().map_err(Error::storage)
+        })
+        .await
     }
     async fn pending(&self, id: &str) -> Result<Vec<Record>> {
         let id = id.to_owned();
@@ -142,10 +197,10 @@ impl Archive for LocalArchive {
                     let old: Record =
                         serde_json::from_slice(&std::fs::read(&path).map_err(Error::storage)?)
                             .map_err(Error::storage)?;
-                    if old.state_hash != record.state_hash {
+                    if old != record {
                         return Err(Error::new(
                             settlers_protocol::ErrorCode::Internal,
-                            "archive hash conflict",
+                            "archive record conflict",
                         ));
                     }
                     continue;

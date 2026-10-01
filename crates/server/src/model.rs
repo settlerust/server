@@ -1,3 +1,4 @@
+//! Authoritative snapshots and replay inputs. Participant responses are built by projections.
 use crate::auth::Identity;
 use serde::{Deserialize, Serialize};
 use settlers_engine::{Settings, State};
@@ -41,6 +42,8 @@ pub struct Offer {
     pub turn: Option<u32>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Complete private state for one game, including seeds, receipts, hands, and filters.
+/// Serialize this only for server-owned checkpoints; use a projected view for participants.
 pub struct Room {
     pub schema: u8,
     pub id: String,

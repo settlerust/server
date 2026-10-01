@@ -1,6 +1,20 @@
 use crate::*;
 
 /// Validate and apply one action without allocating or mutating the input.
+///
+/// The seed and random cursor are part of the state, so the same inputs produce
+/// the same successor. Invalid actions return a rule error without a successor.
+///
+/// ```
+/// use settlers_engine::{Action, Settings, State, apply, legal_actions};
+///
+/// let initial = State::new(Settings::default(), [7; 32])?;
+/// let action = legal_actions(&initial, initial.current)[0];
+/// let next = apply(&initial, initial.current, action)?;
+/// assert_ne!(next.board, initial.board);
+/// assert_eq!(next, apply(&initial, initial.current, action)?);
+/// # Ok::<(), settlers_engine::RuleError>(())
+/// ```
 pub fn apply(state: &State, player: u8, action: Action) -> Result<State, RuleError> {
     execute(state, player, action, None, &mut |_| {})
 }

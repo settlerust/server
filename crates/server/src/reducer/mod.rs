@@ -16,6 +16,7 @@ use settlers_engine::Phase;
 use settlers_protocol::*;
 use sha2::{Digest, Sha256};
 
+/// Construct a private room and its first replay record from explicit identity, seed, and time.
 pub fn create(
     id: String,
     request: CreateGame,
@@ -124,6 +125,8 @@ pub fn duplicate(
     }
     Ok(None)
 }
+/// Validate one input and return the proposed snapshot and matching replay record.
+/// The caller must durably commit both before publishing; an error leaves `input` unchanged.
 pub fn reduce(input: &Room, event: Input, now: u64) -> Result<(Room, Record)> {
     reduce_version(input, event, now, "base-v9")
 }
