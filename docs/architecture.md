@@ -76,3 +76,34 @@ projection: `research_hands` exposes all current hands, and research spectator
 events include directed chat and theft receipts. Seated identities keep their
 normal private projection, including when the room is a research game. This
 opt-in mode never exposes future randomness, future deck order or private filters.
+
+## Maintainability and remaining debt
+
+The implementation is a functional core with stateful adapters. Struct methods do
+not imply an object hierarchy: rule transitions return values, while actors and
+storage adapters own mutable state, queues, and connections. This split makes rule,
+room, and projection behavior testable without a running server.
+
+Current module boundaries isolate creation, command authorization, replay hashing,
+and versioned room postprocessing. Search separates configuration/evaluation/reporting from
+candidate generation and simulation. Comments explain present constraints such as
+commit-before-broadcast, shared scenario comparisons, privacy, and bounded I/O.
+
+The main remaining risks are:
+
+- Packed arrays and public authoritative fields still permit invalid construction
+  inside trusted Rust code. Boundary validators catch serialized corruption; they
+  do not make every invalid state unrepresentable. Seat/location newtypes and
+  narrower mutation APIs would be a separate representation change.
+- Bargaining evaluation remains a substantial function, and the pure reducer still
+  clones the room. Further decomposition should follow measured complexity; clone
+  or allocation changes need solver and server workload benchmarks.
+- Search budgets use a clock and mutable caches. Reproducible tests should use fixed
+  node budgets and an injected clock; latency/playing-strength claims need arena
+  measurements rather than ordinary unit tests.
+- AWS sequence indexing bounds reads but retains a second copy of every record.
+  Retention or S3 range-index designs need a separate operational policy and
+  migration; silently deleting index entries would break online replay history.
+- Full game, failure-injection, fixed replay, and conservation tests cover distinct
+  risks. They do not prove all rule combinations. More targeted development-card,
+  retirement, discard, and simultaneous trade scenarios remain useful additions.

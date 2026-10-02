@@ -1,5 +1,6 @@
 //! Authoritative snapshots and replay inputs. Participant responses are built by projections.
 use crate::auth::Identity;
+mod validation;
 use serde::{Deserialize, Serialize};
 use settlers_engine::{Settings, State};
 use settlers_protocol::*;
@@ -150,11 +151,23 @@ pub enum Input {
     },
     Timeout,
 }
+/// Replay semantics are independent of participant protocol schemas.
+/// Add a variant and replay dispatch together when transition semantics change.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReplayVersion {
+    #[default]
+    #[serde(rename = "base-v9")]
+    BaseV9,
+}
+impl ReplayVersion {
+    pub const CURRENT: Self = Self::BaseV9;
+}
+
 /// Private research archive. Participants only receive its redacted `public` projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     pub schema: u8,
-    pub engine_version: String,
+    pub engine_version: ReplayVersion,
     pub game_id: String,
     pub sequence: u64,
     pub timestamp_ms: u64,

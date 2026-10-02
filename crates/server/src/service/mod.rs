@@ -67,12 +67,7 @@ impl GameService {
                         "assigned games exceed server capacity",
                     ));
                 }
-                if room.schema != 1 {
-                    return Err(Error::new(
-                        ErrorCode::Internal,
-                        "unsupported persisted room schema",
-                    ));
-                }
+                room.validate()?;
                 for subject in room
                     .members
                     .iter()
@@ -98,6 +93,7 @@ impl GameService {
                         // A full outbox must not prevent read access to the last durable state.
                         // The actor reconciles socket presence once commits are available again.
                         room = service.inner.store.load(&id).await?.ok_or_else(closed)?;
+                        room.validate()?;
                         break;
                     }
                     room = next;
@@ -196,6 +192,7 @@ impl GameService {
             ));
         }
         if let Some(room) = self.inner.store.load(id).await? {
+            room.validate()?;
             let view = crate::reducer::view(&room, &identity.subject)?;
             if !view.host {
                 return Err(Error::new(

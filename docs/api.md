@@ -95,7 +95,7 @@ Limits: 16 communication/offer commands per seat per minute, four open offers pe
 
 ## Private theft receipts
 
-The public `rule/stole` event contains `player`, `victim`, and `count`. The thief and victim additionally receive `theft_details { player, victim, resource }` in the same batch. Other seated players and standard spectators never receive that private event, whether via WebSocket, REST history, or reconnect recovery. Clients should render the public count when no authorized receipt is present. Historical `base-v1`/`base-v2` records contain only the public event; new records use `base-v4` without changing wire protocol version 1.
+The public `rule/stole` event contains `player`, `victim`, and `count`. The thief and victim additionally receive `theft_details { player, victim, resource }` in the same batch. Other seated players and standard spectators never receive that private event, whether via WebSocket, REST history, or reconnect recovery. Clients should render the public count when no authorized receipt is present. Participant wire protocol remains version 1.
 
 ## WebSocket
 
@@ -163,8 +163,7 @@ Before the opening rolls, each player must open a game WebSocket and send `set_r
 `ready: true`. Readiness appears in `members[].ready` and `ready_changed` events.
 The last socket disconnect clears that player's readiness in the lobby; another
 open tab preserves it. Changing settings clears everyone's confirmation. Remote
-AI uses the same command as humans. Archived versions before `base-v5` retain their
-original start behavior when replayed.
+AI uses the same command as humans. Opening rolls confirm readiness once; `start` does not ask players to confirm again.
 
 Readiness is a lobby decision. Once `roll_for_order` commits an opening,
 `set_ready` is no longer accepted, disconnects do not reset readiness, and `start`
@@ -199,7 +198,7 @@ equal and older revisions cannot restore a previous name.
 REST views, WebSocket snapshots/events, and paginated history use the room's
 current display-name projection, including for events recorded before a privacy
 change. Private persistence and restricted research archives retain replay inputs.
-An empty display-name map is omitted from serialization to preserve legacy hashes.
+An empty display-name map is omitted from serialization.
 
 
 ## Presence and disconnected seats

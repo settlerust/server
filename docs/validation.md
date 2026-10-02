@@ -1,4 +1,29 @@
-# Validation record — 2026-09-07
+# Validation record — 2026-10-01
+
+The incremental open-source preparation passed `cargo fmt --all --check`, workspace
+Clippy with all targets/features and warnings denied, and the full all-feature Rust
+suite: **239 passed, 0 failed, 3 ignored**. The ignored targets are two DynamoDB
+Local integrations and one benchmark. Docker did not respond to a bounded
+availability check, so the container tests were not rerun. The local HTTP AWS SDK
+fixture passed conditional index retries, conflicting-record rejection, strongly
+consistent paginated reads, gzip import reads, and zero S3 calls for online pages.
+
+TypeScript checking/tests, strict Python mypy/client tests, unchanged JSON Schema
+and generated clients, Gitleaks working-tree scan, and cached Cargo advisory checks
+passed. No live AWS deployment or price/latency benchmark was performed.
+
+New regressions cover typed base-v9 replay and a permanent 29-record fixture;
+corrupt snapshots and browser checkpoints; settings/seat/phase/occupancy indices;
+resource, development-card, and piece inventories; legal play and retirement;
+long history without whole-archive reads; gaps, file-key mismatches, read caps,
+and cursor overflow. Valid base-v9 behavior retains the fixture's fixed final hash.
+
+The full suite passed before the final module/import cleanup and explicit version
+dispatch extraction. Replay, readiness, opening, discard, disconnection, theft,
+trade, history, recovery, and AWS SDK regressions plus workspace Clippy passed
+again afterward. The base-v9 fixture retained its exact final hash.
+
+## Validation record — 2026-09-07
 
 Executed locally on macOS arm64 with Rust 1.96.0, Node 24.19, and Python 3.14. The commands and fixtures are in [development.md](development.md); CI repeats them on Linux.
 

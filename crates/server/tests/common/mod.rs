@@ -127,7 +127,7 @@ impl Harness {
         fixture.version += 1;
         let record = server::model::Record {
             schema: 1,
-            engine_version: "base-v1".into(),
+            engine_version: server::model::ReplayVersion::CURRENT,
             game_id: fixture.id.clone(),
             sequence: fixture.version,
             timestamp_ms: 1,

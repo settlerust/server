@@ -5,7 +5,7 @@ use settlers_engine::{Action, Phase};
 use settlers_protocol::*;
 
 #[test]
-fn theft_resource_is_private_and_old_archives_still_replay() {
+fn theft_resource_is_private_and_base_v9_archives_replay() {
     let (mut room, first) = reducer::create(
         "theft-table".into(),
         CreateGame {
@@ -156,19 +156,6 @@ fn theft_resource_is_private_and_old_archives_still_replay() {
     let expected = reducer::state_hash(&room).unwrap();
     assert_eq!(
         reducer::state_hash(&reducer::replay(&records).unwrap()).unwrap(),
-        expected
-    );
-    let legacy: Vec<_> = records
-        .into_iter()
-        .map(|mut r| {
-            r.engine_version = "base-v2".into();
-            r.public
-                .retain(|e| !matches!(e, PublicEvent::TheftDetails { .. }));
-            r
-        })
-        .collect();
-    assert_eq!(
-        reducer::state_hash(&reducer::replay(&legacy).unwrap()).unwrap(),
         expected
     );
 }

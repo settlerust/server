@@ -10,3 +10,13 @@ an operator-provided verification key; it does not load this fixture at runtime.
 
 The secret scanner allows the private-key rule for this exact fixture path.
 Other rules and paths remain subject to the default scan.
+
+## Permanent replay fixture
+
+`base-v9-game.jsonl` is a fixed two-player game generated from the unchanged base-v9
+reducer before version cleanup. It includes membership, presence, readiness,
+opening rolls, setup, play, and victory. Its 29 records contain deterministic
+request IDs, a fixed seed and timestamps, public events, and state hashes.
+`tests/replay_fixtures.rs` verifies the final hash and rejects corrupt records.
+Do not regenerate it to make a failing test pass; a semantic change needs an
+explicit replay-version decision and a separate fixture.

@@ -68,8 +68,12 @@ impl Store for LocalStore {
                 .query_row("SELECT state FROM games WHERE id=?1", [id], |r| r.get(0))
                 .optional()
                 .map_err(Error::storage)?;
-            json.map(|json| serde_json::from_str(&json).map_err(Error::storage))
-                .transpose()
+            json.map(|json| {
+                let room: Room = serde_json::from_str(&json).map_err(Error::storage)?;
+                room.validate()?;
+                Ok(room)
+            })
+            .transpose()
         })
         .await
     }
@@ -221,6 +225,32 @@ impl Archive for LocalArchive {
                     .map_err(Error::storage)?;
             }
             Ok(())
+        })
+        .await
+        .map_err(Error::storage)?
+    }
+    async fn read_page(&self, id: &str, after: u64, limit: usize) -> Result<Vec<Record>> {
+        valid_id(id)?;
+        let Some((first, last)) = super::sequence_window(after, limit) else {
+            return Ok(vec![]);
+        };
+        let dir = self.root.join(format!("game_id={id}"));
+        let id = id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let mut records = Vec::new();
+            for sequence in first..=last {
+                let bytes = match std::fs::read(dir.join(format!("{sequence:020}.json"))) {
+                    Ok(bytes) => bytes,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(Error::storage(error)),
+                };
+                let record: Record = serde_json::from_slice(&bytes).map_err(Error::storage)?;
+                if record.game_id != id || record.sequence != sequence {
+                    return Err(Error::storage("archive key does not match record"));
+                }
+                records.push(record);
+            }
+            Ok(records)
         })
         .await
         .map_err(Error::storage)?

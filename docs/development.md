@@ -1,6 +1,6 @@
 # Development and validation
 
-Use Rust 1.96+, Node 24 for TypeScript tests, Python 3.11+, and Terraform 1.5+. AWS SDK crates are behind `--features aws`; the default server runs entirely locally. Dependencies are locked in Cargo/npm/Terraform lock files. Most handwritten tests live in each crate's separate test directory; a few evaluation helpers retain inline unit tests.
+Use Rust 1.96+, Node 24 for TypeScript tests, Python 3.11+, and Terraform 1.5+. AWS SDK crates are behind `--features aws`; the default server runs entirely locally. Dependencies are locked in Cargo/npm/Terraform lock files. Handwritten tests live in each crate's separate test directory, including private-helper tests attached with `#[path]`.
 
 ```sh
 cargo fmt --all --check
@@ -77,7 +77,7 @@ cargo llvm-cov --workspace --all-features --locked --html
 
 The ordinary coverage command excludes ignored local-service tests. Run those
 with their endpoint configured when measuring the AWS paths. Review uncovered
-error paths and compatibility branches before setting a coverage threshold.
+error paths and replay dispatch before setting a coverage threshold.
 
 The secret-scan workflow scans reachable Git history with a pinned Gitleaks
 release. Its only private-key exception is the documented public test fixture.
@@ -94,7 +94,7 @@ The security workflow also checks all feature dependencies against RustSec with
 cargo deny --all-features --locked check advisories
 ```
 
-Failure-injection adapters test both pre-commit failure and a successful commit whose acknowledgment is lost. Archive tests distinguish accepted delivery from S3 read-back. Replays verify the complete room hash after every record, including metadata and communication settings, not just board occupancy.
+Failure-injection adapters test both pre-commit failure and a successful commit whose acknowledgment is lost. Archive tests distinguish accepted delivery from durable archive read-back. Replays verify the complete room hash after every record, including metadata and communication settings, not just board occupancy.
 
 ## Real processes and cross-language clients
 
@@ -132,7 +132,7 @@ Use the vendored [Rust skill](../.agents/skills/rust-best-practices/SKILL.md) an
 
 ## Opening ceremony and remote table play
 
-`roll_for_order` is an optional host-only lobby command after all seats are occupied. It persists public `OpeningRoll` values and clockwise `Opening.order` in `GameView.opening`, emitting `order_decided`. Only tied highest rollers reroll. It does not create a game or a turn deadline; `start` begins setup using the recorded winner and advances the private RNG past those rolls. Configure and reroll requests are rejected once order is fixed. The legacy `start` path stays unchanged for historical replay compatibility; absent opening state is omitted from stored room JSON.
+`roll_for_order` is an optional command for a seated player or the host after all seats are connected and ready. It persists public `OpeningRoll` values and clockwise `Opening.order` in `GameView.opening`, emitting `order_decided`. Only tied highest rollers reroll. It does not create a game or a turn deadline; `start` begins setup using the recorded winner and advances the private RNG past those rolls. Configure and reroll requests are rejected once order is fixed. Without an opening ceremony, `start` uses the seed-selected first seat.
 
 The `remote` binary wraps its selected builder policy with a trade proposer. It offers one surplus card for one missing target resource, at most once per turn, using only its redacted view. `SETTLERS_HUMAN_SEAT` can prioritize a seated human, `SETTLERS_MOVE_DELAY_MS` paces moves (0–5000 ms), and `SETTLERS_TRADE_WAIT_MS` keeps an offer open before continuing (0–30000 ms). Defaults are zero for CLI benchmark runs.
 
@@ -143,9 +143,9 @@ timed play. Untimed games keep `GameView.deadline_ms` null through setup, turns,
 presence changes, discards, and restoration. An untimed `DiscardView` uses
 `deadline_ms: 0`; clients must keep its controls enabled and omit its countdown.
 Trade offers may still have their own explicit expiry independently of the turn.
-Staged discards introduced archive engine version `base-v2`; current transitions use `base-v9`. Replay retains the `base-v1` deadline and timeout behavior for older records. A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
+A seven with pending discards pauses the roller's remaining turn time and starts one shared deadline of `max(turn_seconds * 1000 / 8, 10000)` milliseconds. Presence changes and choices cannot extend it. After all discards resolve, the roller receives the remaining turn time to choose the robber move.
 
-The owning `GameView.discard` contains the round `id`, fixed `required` count, editable `draft`, confirmed `locked` cards, and `deadline_ms`. It is absent for spectators and only contains the recipient's choices. Send `select_discard { discard_id, resources }` to replace the draft, then `confirm_discard { discard_id }` to lock it. Multiple confirmations may fill the quota. These commands tolerate other seats advancing the room version but require the exact active round ID. Receipts remain idempotent. Confirmed cards cannot be removed, and the engine applies one exact discard when the quota is complete. The legacy `act/discard` command still works for agents; it must include previously locked cards.
+The owning `GameView.discard` contains the round `id`, fixed `required` count, editable `draft`, confirmed `locked` cards, and `deadline_ms`. It is absent for spectators and only contains the recipient's choices. Send `select_discard { discard_id, resources }` to replace the draft, then `confirm_discard { discard_id }` to lock it. Multiple confirmations may fill the quota. These commands tolerate other seats advancing the room version but require the exact active round ID. Receipts remain idempotent. Confirmed cards cannot be removed, and the engine applies one exact discard when the quota is complete. Agents can submit an exact `act/discard` command; it must include previously locked cards.
 
 At expiry, the server preserves locked cards and the latest draft, fills only the shortfall from the largest remaining resource stack (ties by resource ID), and resolves every pending seat. Staging is committed with the room and outbox and survives restart. Public `discarded` counts are emitted only once a seat resolves; resource types are not included in that event. An automatically rolled seven also opens the shared window.
 
@@ -159,9 +159,9 @@ ordinary spectators, and research spectators.
 
 ## Private theft receipts and lobby discovery
 
-`base-v3` adds `theft_details { player, victim, resource }` alongside the public `rule/stole` count. The reducer derives this receipt from the committed before/after hands. Live, history, and archive projections disclose it only to the thief and victim; all other seated players and standard spectators receive the public event only. Explicit research spectators receive the receipt, as described below. Replay uses the original record version so `base-v1` and `base-v2` archives retain their original events and hashes. The theft regression test exercises real commands, every viewer, and legacy replay.
+The reducer adds `theft_details { player, victim, resource }` alongside the public `rule/stole` count. The reducer derives this receipt from the committed before/after hands. Live, history, and archive projections disclose it only to the thief and victim; all other seated players and standard spectators receive the public event only. Explicit research spectators receive the receipt, as described below. The theft regression test exercises real commands, every viewer, and replay.
 
-`CreateGame.player_name` optionally names the seated host without changing their JWT subject. Omission preserves the JWT display name and historical serialization. The host may leave seats open: authenticated visitors read the public unstarted lobby, then explicitly `join` as a player or spectator. A host calls `roll_for_order` only when all seats are occupied, then `start`. Started games require membership before reads; a new spectator can join using the current version from a conflict response. Game IDs are identifiers, never credentials.
+`CreateGame.player_name` optionally names the seated host without changing their JWT subject. Omission uses the JWT display name. The host may leave seats open: authenticated visitors read the public unstarted lobby, then explicitly `join` as a player or spectator. A host calls `roll_for_order` only when all seats are occupied, then `start`. Started games require membership before reads; a new spectator can join using the current version from a conflict response. Game IDs are identifiers, never credentials.
 
 `GameSummary.connected_players` counts currently connected seated members, excluding spectators. Clients can distinguish active tables from saved games awaiting reconnection. It reveals no private game state.
 
@@ -192,8 +192,7 @@ the deadline does not reset. `setup_settlement_moved` describes the correction.
 
 ## Atomic trade replacement
 
-Atomic replacement was introduced in `base-v4`; replay retains the original
-reducer behavior for earlier archives. An improved offer to the exact same recipient set
+An improved offer to the exact same recipient set
 replaces an open offer from the same sender when it gives at least as much of
 every resource, asks at most as much of every resource, and strictly improves one
 quantity. The server cancels dominated offers before applying the open-offer cap.
@@ -207,14 +206,13 @@ the offer sender's resources; it does not disclose recipient affordability.
 
 ## Trade clocks and consideration
 
-`base-v8` adds timed offers and explicit consideration. `offer_trade` accepts
+`offer_trade` accepts
 optional `expires_in_ms` (1,000–300,000 ms, default 30,000). Every new offer carries
 `created_at_ms` and `expires_at_ms`; the deadline is capped by the current turn.
 Server ticks expire offers independently of turn timeout, with the same atomic
 state/outbox commit as other transitions. `trade_closed` reports `expired`, and
 acceptance at or after that instant fails. Browser-local checkpoints preserve the
-remaining lifetime while a table is closed. Replay retains versions 1 through 7
-without adding clocks to historical offers.
+remaining lifetime while a table is closed.
 
 Recipients send `think_trade { offer_id }` to add themselves to the offer's
 `thinking` list and emit `trade_thinking`. This is an explicit response, independent
@@ -294,3 +292,17 @@ existing two-minute recovery window. The automatic outcome remains Expert after
 
 New games accept only the four built-in strengths above. Historical worker
 records remain readable so existing games can finish.
+
+## Replay and module maintenance
+
+Replay semantics default to typed `ReplayVersion::BaseV9`. Versions before base-v9
+are unsupported. Keep fixed JSONL fixtures under `crates/server/tests/fixtures`;
+tests compare persisted hashes and events rather than building their expected data
+with the reducer under test. Add future variants at the creation, default reduction, and replay dispatch points. Keep base-v9 transitions in `reducer/base_v9.rs` when changing the default.
+
+Search configuration, leaf selection, reporting, opening candidates, bargaining,
+and offline ranking have separate modules. Within search, candidate generation,
+action ordering, own-turn planning, and opponent scenarios are separate. Actor
+request dispatch and durable commit recovery are separate from its queue loop.
+Tests belong under the owning crate's `tests/`; internal tests use an explicit
+`#[path]` module when private helpers need coverage.

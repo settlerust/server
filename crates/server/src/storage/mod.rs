@@ -28,6 +28,10 @@ pub trait Store: Send + Sync {
 #[async_trait]
 pub trait Archive: Send + Sync {
     async fn deliver(&self, records: &[Record]) -> Result<()>;
+    /// Read at most `limit` consecutive sequence positions after the cursor, capped at 256.
+    /// Missing positions stay missing; never scan earlier records to fill a page.
+    async fn read_page(&self, id: &str, after: u64, limit: usize) -> Result<Vec<Record>>;
+    /// Explicit full export/import only. Online history and delivery verification use `read_page`.
     async fn read(&self, id: &str) -> Result<Vec<Record>>;
 }
 pub const OUTBOX_LIMIT: usize = 256;
@@ -77,4 +81,11 @@ pub fn firehose_batches<'a>(
         groups.entry(stream).or_default().push(record);
     }
     groups
+}
+
+/// Numeric windows bound storage work even when an archive has gaps.
+pub fn sequence_window(after: u64, limit: usize) -> Option<(u64, u64)> {
+    let first = after.checked_add(1)?;
+    let last = after.saturating_add(limit.min(OUTBOX_LIMIT) as u64);
+    (first <= last).then_some((first, last))
 }

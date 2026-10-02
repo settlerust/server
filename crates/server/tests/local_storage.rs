@@ -118,7 +118,7 @@ async fn archive_retries_accept_only_identical_records() {
     let mut different_timestamp = record.clone();
     different_timestamp.timestamp_ms += 1;
     let mut different_version = record.clone();
-    different_version.engine_version = "base-v1".into();
+    different_version.schema = 2;
     let mut different_hash = record.clone();
     different_hash.state_hash = "different".into();
 

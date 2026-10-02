@@ -128,6 +128,9 @@ struct Mock {
     calls: Arc<AtomicUsize>,
     received: Arc<Mutex<Vec<serde_json::Value>>>,
     record: server::model::Record,
+    indexed: Arc<Mutex<std::collections::BTreeMap<String, serde_json::Value>>>,
+    queries: Arc<Mutex<Vec<serde_json::Value>>>,
+    s3_reads: Arc<AtomicUsize>,
 }
 async fn aws_response(
     axum::extract::State(state): axum::extract::State<Mock>,
@@ -135,17 +138,64 @@ async fn aws_response(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     if request.method() == axum::http::Method::POST {
+        let target = request
+            .headers()
+            .get("x-amz-target")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
         let bytes = axum::body::to_bytes(request.into_body(), 1_048_576)
             .await
             .unwrap();
-        state
-            .received
-            .lock()
-            .unwrap()
-            .push(serde_json::from_slice(&bytes).unwrap());
+        let input: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        if target.contains("DynamoDB") {
+            let mut indexed = state.indexed.lock().unwrap();
+            if target.ends_with("PutItem") {
+                let key = input["Item"]["kind"]["S"].as_str().unwrap().to_owned();
+                if indexed.contains_key(&key) {
+                    return (axum::http::StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"__type":"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException","message":"exists"}))).into_response();
+                }
+                indexed.insert(key, input["Item"].clone());
+                return axum::Json(serde_json::json!({})).into_response();
+            }
+            if target.ends_with("GetItem") {
+                let item = indexed
+                    .get(input["Key"]["kind"]["S"].as_str().unwrap())
+                    .unwrap();
+                return axum::Json(serde_json::json!({"Item":item})).into_response();
+            }
+            assert!(target.ends_with("Query"));
+            state.queries.lock().unwrap().push(input.clone());
+            let first = input["ExpressionAttributeValues"][":first"]["S"]
+                .as_str()
+                .unwrap();
+            let last = input["ExpressionAttributeValues"][":last"]["S"]
+                .as_str()
+                .unwrap();
+            let after = input["ExclusiveStartKey"]["kind"]["S"]
+                .as_str()
+                .unwrap_or("");
+            let rows: Vec<_> = indexed
+                .iter()
+                .filter(|(key, _)| {
+                    key.as_str() >= first && key.as_str() <= last && key.as_str() > after
+                })
+                .map(|(_, item)| item.clone())
+                .collect();
+            // Force SDK pagination even for a tiny window.
+            let mut output = serde_json::json!({"Items":rows.iter().take(2).collect::<Vec<_>>()});
+            if rows.len() > 2 {
+                output["LastEvaluatedKey"] =
+                    serde_json::json!({"game_id":rows[1]["game_id"],"kind":rows[1]["kind"]});
+            }
+            return axum::Json(output).into_response();
+        }
+        state.received.lock().unwrap().push(input);
         let n = state.calls.fetch_add(1, Ordering::SeqCst);
         return axum::Json(if n==0{serde_json::json!({"FailedPutCount":1,"RequestResponses":[{"ErrorCode":"ServiceUnavailableException","ErrorMessage":"injected"}]})}else{serde_json::json!({"FailedPutCount":0,"RequestResponses":[{"RecordId":"ok"}]})}).into_response();
     }
+    state.s3_reads.fetch_add(1, Ordering::SeqCst);
     if request
         .uri()
         .query()
@@ -181,6 +231,9 @@ async fn aws_sdk_firehose_handles_partial_failure_and_reads_gzip_s3_slices() {
         calls: Arc::new(AtomicUsize::new(0)),
         received: Arc::new(Mutex::new(vec![])),
         record: record.clone(),
+        indexed: Arc::new(Mutex::new(Default::default())),
+        queries: Arc::new(Mutex::new(vec![])),
+        s3_reads: Arc::new(AtomicUsize::new(0)),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
@@ -211,7 +264,24 @@ async fn aws_sdk_firehose_handles_partial_failure_and_reads_gzip_s3_slices() {
             ))
             .build(),
     );
-    let archive = FirehoseArchive::new(firehose, s3, "test-stream".into(), "test-bucket".into());
+    let dynamo = aws_sdk_dynamodb::Client::from_conf(
+        aws_sdk_dynamodb::config::Builder::new()
+            .behavior_version_latest()
+            .endpoint_url(&endpoint)
+            .region(aws_sdk_dynamodb::config::Region::new("us-east-1"))
+            .credentials_provider(aws_sdk_dynamodb::config::Credentials::new(
+                "test", "test", None, None, "tests",
+            ))
+            .build(),
+    );
+    let archive = FirehoseArchive::new(
+        firehose,
+        s3,
+        "test-stream".into(),
+        "test-bucket".into(),
+        dynamo,
+        "test-table".into(),
+    );
     assert!(
         archive
             .deliver(std::slice::from_ref(&record))
@@ -222,6 +292,63 @@ async fn aws_sdk_firehose_handles_partial_failure_and_reads_gzip_s3_slices() {
         .deliver(std::slice::from_ref(&record))
         .await
         .unwrap();
+    assert_eq!(
+        archive.read_page(&record.game_id, 0, 1).await.unwrap(),
+        vec![record.clone()]
+    );
+    archive
+        .index_records(std::slice::from_ref(&record))
+        .await
+        .unwrap();
+    let mut conflict = record.clone();
+    conflict.public.clear();
+    assert!(archive.index_records(&[conflict]).await.is_err());
+    let records: Vec<_> = (2..=320)
+        .map(|sequence| {
+            let mut row = record.clone();
+            row.sequence = sequence;
+            row
+        })
+        .collect();
+    archive.index_records(&records).await.unwrap();
+    assert_eq!(
+        archive
+            .read_page(&record.game_id, 300, 10)
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| r.sequence)
+            .collect::<Vec<_>>(),
+        (301..=310).collect::<Vec<_>>()
+    );
+    assert!(
+        archive
+            .read_page(&record.game_id, u64::MAX, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        archive
+            .read_page(&record.game_id, 0, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(mock.s3_reads.load(Ordering::SeqCst), 0);
+    {
+        let queries = mock.queries.lock().unwrap();
+        assert!(queries.iter().all(|q| q["ConsistentRead"] == true));
+        assert!(
+            queries
+                .iter()
+                .skip(1)
+                .all(|q| q["ExpressionAttributeValues"][":first"]["S"]
+                    == "ARCHIVE#00000000000000000301"
+                    && q["ExpressionAttributeValues"][":last"]["S"]
+                        == "ARCHIVE#00000000000000000310")
+        );
+    }
     let restored = archive.read(&record.game_id).await.unwrap();
     assert_eq!(restored[0].state_hash, record.state_hash);
     use base64::Engine;

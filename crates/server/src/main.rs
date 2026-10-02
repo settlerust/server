@@ -113,7 +113,8 @@ async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {
         "SETTLERS_FIREHOSE_STREAM contains an empty stream name"
     );
     let bucket = std::env::var("SETTLERS_ARCHIVE_BUCKET")?;
-    let mut store = DynamoStore::new(aws_sdk_dynamodb::Client::new(&config), table);
+    let index = aws_sdk_dynamodb::Client::new(&config);
+    let mut store = DynamoStore::new(index.clone(), table.clone());
     if let Ok(id) = std::env::var("SETTLERS_SERVER_ID") {
         store = store.with_owner(id);
     } else if let Ok(id) = std::env::var("SETTLERS_GAME_ID") {
@@ -126,6 +127,8 @@ async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {
             aws_sdk_s3::Client::new(&config),
             stream,
             bucket,
+            index,
+            table,
         )),
     ))
 }
