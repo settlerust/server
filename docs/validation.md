@@ -1,4 +1,28 @@
-# Validation record — 2026-10-03
+# Release validation — 2026-10-03
+
+[Full CI](https://github.com/settlerust/server/actions/runs/37110904135) passes on
+`6cf4044`: formatting, all-target/all-feature Clippy, **250 Rust tests**, both
+DynamoDB Local integrations, unchanged generated schema/clients, client checks,
+and Terraform validation. The three default-suite exclusions are the two
+separately executed DynamoDB integrations and an opt-in benchmark.
+
+All 12 S3 regressions execute successfully, including conditional-write races,
+lost acknowledgments, restore-time archive outages, bounded reads, corrupt
+objects, and verified base-v9 import/export. The HTTP fixture decodes S3 keys
+through routing and injects restore failures before the restore-time flush.
+
+The process E2E launches a real server and four independent policy processes.
+It finishes a ten-point game in **63 turns**, validates **597 frames**, and reads
+**320 history pages** through the language clients. Abrupt kill/restart preserves
+the game, saved JWT, and idempotent receipt. The latest
+[security checks](https://github.com/settlerust/server/actions/runs/37110904138)
+pass for reachable Git history and all-feature dependency advisories.
+
+No live AWS archive import, old-index deletion, cost benchmark, or production
+deployment is part of these checks. The process E2E uses local durable storage;
+the AWS SDK fixtures and DynamoDB Local tests cover the AWS storage boundaries.
+
+## Implementation checks before runtime validation — 2026-10-03
 
 The S3 history implementation passes Rust formatting and workspace Clippy with all
 targets/features and warnings denied. The new AWS SDK regression tests compile.
