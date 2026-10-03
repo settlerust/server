@@ -171,7 +171,7 @@ async fn automatic_filters_do_not_disclose_private_preferences() {
 }
 
 #[tokio::test]
-async fn archived_declines_replay_with_their_original_transition_version() {
+async fn archived_declines_replay_with_current_transition_version() {
     let h = Harness::new().await;
     h.start().await;
     loop {
@@ -214,14 +214,6 @@ async fn archived_declines_replay_with_their_original_transition_version() {
     )
     .await;
     let offer_id = h.room().await.offers.last().unwrap().public.id.clone();
-    let mut legacy_hashes = std::collections::BTreeMap::new();
-    let mut legacy_offer = h.room().await;
-    legacy_offer.offers.last_mut().unwrap().public.created_at_ms = None;
-    legacy_offer.offers.last_mut().unwrap().public.expires_at_ms = None;
-    legacy_hashes.insert(
-        legacy_offer.version,
-        reducer::state_hash(&legacy_offer).unwrap(),
-    );
     for recipient in to {
         h.command(
             recipient,
@@ -230,13 +222,6 @@ async fn archived_declines_replay_with_their_original_transition_version() {
             },
         )
         .await;
-        let mut legacy = h.room().await;
-        let offer = legacy.offers.last_mut().unwrap();
-        offer.public.created_at_ms = None;
-        offer.public.expires_at_ms = None;
-        offer.public.declined.clear();
-        offer.public.status = OfferStatus::Open;
-        legacy_hashes.insert(legacy.version, reducer::state_hash(&legacy).unwrap());
     }
     let final_room = h.room().await;
     h.service.flush_archive().await.unwrap();
@@ -245,35 +230,4 @@ async fn archived_declines_replay_with_their_original_transition_version() {
         reducer::state_hash(&reducer::replay(&records).unwrap()).unwrap(),
         reducer::state_hash(&final_room).unwrap()
     );
-    let legacy_records: Vec<_> = records
-        .into_iter()
-        .map(|mut record| {
-            record.engine_version = "base-v5".into();
-            for event in &mut record.public {
-                if let PublicEvent::TradeOffered { offer } = event {
-                    offer.created_at_ms = None;
-                    offer.expires_at_ms = None;
-                }
-            }
-            if let Some(hash) = legacy_hashes.get(&record.sequence) {
-                record.state_hash.clone_from(hash);
-                record.public.retain(|event| {
-                    !matches!(
-                        event,
-                        PublicEvent::TradeClosed {
-                            reason: TradeCloseReason::Declined,
-                            ..
-                        }
-                    )
-                });
-            }
-            record
-        })
-        .collect();
-    let old_room = reducer::replay(&legacy_records).unwrap();
-    assert_eq!(
-        old_room.offers.last().unwrap().public.status,
-        OfferStatus::Open
-    );
-    assert!(old_room.offers.last().unwrap().public.declined.is_empty());
 }

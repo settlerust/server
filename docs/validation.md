@@ -1,4 +1,76 @@
-# Validation record — 2026-09-07
+# Release validation — 2026-10-03
+
+[Full CI](https://github.com/settlerust/server/actions/runs/37110904135) passes on
+`6cf4044`: formatting, all-target/all-feature Clippy, **250 Rust tests**, both
+DynamoDB Local integrations, unchanged generated schema/clients, client checks,
+and Terraform validation. The three default-suite exclusions are the two
+separately executed DynamoDB integrations and an opt-in benchmark.
+
+All 12 S3 regressions execute successfully, including conditional-write races,
+lost acknowledgments, restore-time archive outages, bounded reads, corrupt
+objects, and verified base-v9 import/export. The HTTP fixture decodes S3 keys
+through routing and injects restore failures before the restore-time flush.
+
+The process E2E launches a real server and four independent policy processes.
+It finishes a ten-point game in **63 turns**, validates **597 frames**, and reads
+**320 history pages** through the language clients. Abrupt kill/restart preserves
+the game, saved JWT, and idempotent receipt. The latest
+[security checks](https://github.com/settlerust/server/actions/runs/37110904138)
+pass for reachable Git history and all-feature dependency advisories.
+
+No live AWS archive import, old-index deletion, cost benchmark, or production
+deployment is part of these checks. The process E2E uses local durable storage;
+the AWS SDK fixtures and DynamoDB Local tests cover the AWS storage boundaries.
+
+## Implementation checks before runtime validation — 2026-10-03
+
+The S3 history implementation passes Rust formatting and workspace Clippy with all
+targets/features and warnings denied. The new AWS SDK regression tests compile.
+Terraform formatting and provider-backed validation pass. The companion hosted
+service passes application and infrastructure typechecking and all 88 unit tests.
+TypeScript client checking and its test pass; strict Python mypy and two client
+tests pass. No protocol or generated client shapes changed.
+
+Runtime Rust validation remains pending: compiling the AWS SDK for the test suite
+failed with `No space left on device`. The new S3 tests have not executed, and no
+passing runtime result is claimed. DynamoDB Local integration also remains pending
+because the Docker daemon is stopped. No live AWS deployment, archive import,
+DynamoDB archive deletion, or cost/latency benchmark was performed.
+
+The new compiled regressions cover fixed gzip batch ranges, concurrent conditional
+updates, identical retries, conflicting records, bounded conflict retries, lost
+write acknowledgments, partial multi-batch failures, read-back failures and outbox
+recovery, public history gaps and pending tails, cursor overflow, bounded compressed
+and decoded sizes, corrupt batches, fixed base-v9 import/export, and optional
+Firehose partial failures. Rerun the full all-feature Rust suite with sufficient
+build-cache space before deployment.
+
+## Validation record — 2026-10-01
+
+The incremental open-source preparation passed `cargo fmt --all --check`, workspace
+Clippy with all targets/features and warnings denied, and the full all-feature Rust
+suite: **239 passed, 0 failed, 3 ignored**. The ignored targets are two DynamoDB
+Local integrations and one benchmark. Docker did not respond to a bounded
+availability check, so the container tests were not rerun. The local HTTP AWS SDK
+fixture passed conditional index retries, conflicting-record rejection, strongly
+consistent paginated reads, gzip import reads, and zero S3 calls for online pages.
+
+TypeScript checking/tests, strict Python mypy/client tests, unchanged JSON Schema
+and generated clients, Gitleaks working-tree scan, and cached Cargo advisory checks
+passed. No live AWS deployment or price/latency benchmark was performed.
+
+New regressions cover typed base-v9 replay and a permanent 29-record fixture;
+corrupt snapshots and browser checkpoints; settings/seat/phase/occupancy indices;
+resource, development-card, and piece inventories; legal play and retirement;
+long history without whole-archive reads; gaps, file-key mismatches, read caps,
+and cursor overflow. Valid base-v9 behavior retains the fixture's fixed final hash.
+
+The full suite passed before the final module/import cleanup and explicit version
+dispatch extraction. Replay, readiness, opening, discard, disconnection, theft,
+trade, history, recovery, and AWS SDK regressions plus workspace Clippy passed
+again afterward. The base-v9 fixture retained its exact final hash.
+
+## Validation record — 2026-09-07
 
 Executed locally on macOS arm64 with Rust 1.96.0, Node 24.19, and Python 3.14. The commands and fixtures are in [development.md](development.md); CI repeats them on Linux.
 

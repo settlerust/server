@@ -1,4 +1,4 @@
-target/
+target
 data/
 .env*
 !.env.example
@@ -27,6 +27,9 @@ lcov.info
 *.gcda
 *.gcno
 *.jwt
+*.sqlite*
+*.db
+*.db-*
 *.pem
 *.key
 *.p12

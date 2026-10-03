@@ -1,4 +1,4 @@
-//! Optional external token verification for an independently operated lobby service.
+//! Verify signed game grants from an external identity service.
 use crate::{
     auth::Identity,
     error::{Error, Result},
@@ -158,6 +158,6 @@ impl Grant {
 fn denied() -> Error {
     Error::new(
         ErrorCode::Forbidden,
-        "the external lobby has not granted this action",
+        "the external issuer has not granted this action",
     )
 }

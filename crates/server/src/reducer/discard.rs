@@ -144,17 +144,12 @@ fn resolve(
     events.extend(effects.into_iter().map(|event| PublicEvent::Rule { event }));
     Ok(())
 }
-pub(super) fn timeout(
-    room: &mut Room,
-    now: u64,
-    events: &mut Vec<PublicEvent>,
-    legacy: bool,
-) -> Result<()> {
+pub(super) fn timeout(room: &mut Room, now: u64, events: &mut Vec<PublicEvent>) -> Result<()> {
     let game = room
         .game
         .as_ref()
         .ok_or_else(|| invalid("game has not started"))?;
-    if !legacy && matches!(game.phase, Phase::Discard { .. }) {
+    if matches!(game.phase, Phase::Discard { .. }) {
         let old = room.clone();
         update(&old, room, now);
         let round = room
@@ -190,7 +185,7 @@ pub(super) fn timeout(
         // Only finish discards. The roller still chooses where to move the robber.
         return Ok(());
     }
-    if !legacy && game.phase == Phase::Roll {
+    if game.phase == Phase::Roll {
         let (rolled, effects) = settlers_engine::apply_recorded(game, game.current, Action::Roll)?;
         if matches!(rolled.phase, Phase::Discard { .. }) {
             events.push(PublicEvent::Rule {

@@ -29,7 +29,7 @@ async-trait.workspace = true
 futures-util.workspace = true
 hmac = "0.12"
 base64 = "0.22"
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 getrandom = "0.3"
 rusqlite = { version = "0.38", features = ["bundled"] }
 tracing = "0.1"
@@ -37,9 +37,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 tower-http = { version = "0.6", features = ["cors"] }
 aws-config = { version = "1", optional = true }
-aws-sdk-dynamodb = { version = "1", optional = true }
-aws-sdk-firehose = { version = "1", optional = true }
-aws-sdk-s3 = { version = "1", optional = true }
+aws-sdk-dynamodb = { version = "1", optional = true, default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-firehose = { version = "1", optional = true, default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", optional = true, default-features = false, features = ["default-https-client", "rt-tokio", "sigv4a", "http-1x"] }
 flate2 = "1"
 settlers-expectimax = { path = "../expectimax" }
 reqwest = { workspace = true, optional = true }

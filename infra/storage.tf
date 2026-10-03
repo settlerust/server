@@ -26,6 +26,16 @@ resource "aws_s3_bucket_versioning" "archive" {
   bucket = aws_s3_bucket.archive.id
   versioning_configuration { status = "Enabled" }
 }
+resource "aws_s3_bucket_lifecycle_configuration" "history_versions" {
+  bucket = aws_s3_bucket.archive.id
+  rule {
+    id     = "expire-superseded-history-batches"
+    status = "Enabled"
+    filter { prefix = "history/v1/" }
+    noncurrent_version_expiration { noncurrent_days = 1 }
+  }
+  depends_on = [aws_s3_bucket_versioning.archive]
+}
 resource "aws_s3_bucket_server_side_encryption_configuration" "archive" {
   bucket = aws_s3_bucket.archive.id
   rule {

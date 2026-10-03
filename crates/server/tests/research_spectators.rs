@@ -151,3 +151,155 @@ async fn research_spectators_get_live_hands_while_agents_remain_redacted_and_rep
     assert!(!standard.research);
     assert!(standard.research_hands.is_none());
 }
+
+#[tokio::test]
+async fn resolved_agent_seats_never_acquire_research_spectator_privileges() {
+    for resolution in [
+        DisconnectResolution::Retire,
+        DisconnectResolution::Easy,
+        DisconnectResolution::Medium,
+        DisconnectResolution::Hard,
+        DisconnectResolution::Expert,
+    ] {
+        let h = Harness::new().await;
+        let created = h
+            .service
+            .create(
+                identity(9),
+                CreateGame {
+                    name: "Research recovery".into(),
+                    research: true,
+                    settings: Settings {
+                        players: 2,
+                        turn_seconds: 86400,
+                        ..Settings::default()
+                    },
+                    host_as_player: false,
+                    player_name: None,
+                    seed: None,
+                },
+                0,
+            )
+            .await
+            .unwrap();
+        let id = created.id;
+        for player in 0..2 {
+            for command in [
+                Command::JoinAgent {
+                    name: format!("Agent {player}"),
+                },
+                Command::SetReady { ready: true },
+            ] {
+                if matches!(command, Command::SetReady { .. }) {
+                    h.service
+                        .presence(
+                            &id,
+                            identity(player).subject,
+                            format!("test-{player}"),
+                            true,
+                            0,
+                        )
+                        .await
+                        .unwrap();
+                }
+                let version = h.service.room(&id).await.unwrap().version;
+                h.service
+                    .execute(&id, identity(player), request(version, command), 0)
+                    .await
+                    .unwrap();
+            }
+        }
+        let version = h.service.room(&id).await.unwrap().version;
+        h.service
+            .execute(&id, identity(9), request(version, Command::Start), 0)
+            .await
+            .unwrap();
+        h.service
+            .presence(&id, identity(0).subject, "test-0".into(), false, 1000)
+            .await
+            .unwrap();
+        let version = h.service.room(&id).await.unwrap().version;
+        h.service
+            .execute(
+                &id,
+                identity(9),
+                request(
+                    version,
+                    Command::ResolveDisconnect {
+                        seat: 0,
+                        disconnected_at_ms: 1000,
+                        resolution,
+                    },
+                ),
+                121000,
+            )
+            .await
+            .unwrap();
+
+        let records = h.store.pending(&id).await.unwrap();
+        let replayed = reducer::replay(&records).unwrap();
+        for room in [h.service.room(&id).await.unwrap(), replayed] {
+            let former = reducer::view(&room, &identity(0).subject).unwrap();
+            assert!(former.game.as_ref().unwrap().own.is_none());
+            assert!(
+                former.research_hands.is_none(),
+                "resolved seat became a spectator: {resolution:?}"
+            );
+            assert!(
+                reducer::view(&room, &identity(9).subject)
+                    .unwrap()
+                    .research_hands
+                    .is_some()
+            );
+
+            // Exercise the same private-event projection used by live delivery and history.
+            let mut record = records.last().unwrap().clone();
+            record.public = vec![
+                PublicEvent::TheftDetails {
+                    player: 1,
+                    victim: 0,
+                    resource: Resource::Brick,
+                },
+                PublicEvent::Message {
+                    from: 1,
+                    to: Some(vec![1]),
+                    message: Communication {
+                        intent: Intent::Chat,
+                        resources: None,
+                        text: Some("private".into()),
+                    },
+                },
+            ];
+            assert!(
+                reducer::batch(&room, &identity(0).subject, &record)
+                    .unwrap()
+                    .events
+                    .is_empty()
+            );
+            assert_eq!(
+                reducer::batch(&room, &identity(9).subject, &record)
+                    .unwrap()
+                    .events,
+                record.public
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn builtin_computer_identity_is_a_seat_and_never_a_research_spectator() {
+    let h = Harness::trading().await;
+    let mut room = h.room().await;
+    room.research = true;
+    for policy in [
+        ComputerPolicy::Easy,
+        ComputerPolicy::Medium,
+        ComputerPolicy::Hard,
+        ComputerPolicy::Expert,
+    ] {
+        room.members[1].computer_policy = Some(policy);
+        let view = reducer::view(&room, &identity(1).subject).unwrap();
+        assert!(view.game.unwrap().own.is_none());
+        assert!(view.research_hands.is_none());
+    }
+}
