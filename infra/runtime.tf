@@ -3,8 +3,9 @@ resource "aws_iam_policy" "server" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:Scan", "dynamodb:PutItem", "dynamodb:DeleteItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"], Resource = aws_dynamodb_table.state.arn },
     { Effect = "Allow", Action = ["firehose:PutRecordBatch"], Resource = aws_kinesis_firehose_delivery_stream.events.arn },
-    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.archive.arn, Condition = { StringLike = { "s3:prefix" = ["events/*"] } } },
-    { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.archive.arn}/events/*" }
+    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.archive.arn, Condition = { StringLike = { "s3:prefix" = ["events/*", "history/v1/*"] } } },
+    { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.archive.arn}/events/*" },
+    { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "${aws_s3_bucket.archive.arn}/history/v1/*" }
   ] })
 }
 resource "aws_iam_role_policy_attachment" "server" {

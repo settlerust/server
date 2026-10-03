@@ -54,6 +54,12 @@ corrupt archive files, and path validation. Research visibility tests cover reti
 and replaced agents: losing control of a seat never grants research spectator
 access, including when projecting replayed records.
 
+`server/tests/s3_history.rs` exercises the AWS SDK against a local HTTP fixture:
+sequence-addressed gzip batches, concurrent conditional updates, identical retries,
+lost acknowledgments, read-back failures, gaps, maximum cursors, bounded object
+decoding, fixed-fixture import/export, and optional Firehose partial failures.
+Online reads never list objects or call DynamoDB for historical records.
+
 `server/tests/config/mod.rs` tests configuration parsing without mutating the
 process environment. It checks defaults, explicit settings, invalid values,
 durable signing-key reuse, Unix key permissions, and preservation of invalid

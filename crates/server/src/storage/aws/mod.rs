@@ -1,4 +1,4 @@
-//! AWS snapshots and immutable replay indexing share one DynamoDB partition per game.
+//! DynamoDB holds recovery state and its outbox; S3 holds replay history.
 use super::{Archive, Store};
 use crate::{
     error::{Error, Result},
@@ -14,8 +14,12 @@ use aws_sdk_s3::Client as S3;
 use std::collections::HashMap;
 
 mod archive;
+mod export;
+mod firehose;
+mod history;
 mod store;
-pub use archive::FirehoseArchive;
+pub use archive::S3Archive;
+pub use firehose::FirehoseArchive;
 pub use store::DynamoStore;
 fn key(id: &str, sort: &str) -> HashMap<String, A> {
     HashMap::from([

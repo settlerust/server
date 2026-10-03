@@ -104,33 +104,30 @@ async fn main() -> anyhow::Result<()> {
 }
 #[cfg(feature = "aws")]
 async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {
-    use server::storage::aws::{DynamoStore, FirehoseArchive};
+    use server::storage::aws::{DynamoStore, FirehoseArchive, S3Archive};
     let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let table = std::env::var("SETTLERS_DYNAMODB_TABLE")?;
-    let stream = std::env::var("SETTLERS_FIREHOSE_STREAM")?;
-    anyhow::ensure!(
-        stream.split(',').all(|name| !name.trim().is_empty()),
-        "SETTLERS_FIREHOSE_STREAM contains an empty stream name"
-    );
     let bucket = std::env::var("SETTLERS_ARCHIVE_BUCKET")?;
-    let index = aws_sdk_dynamodb::Client::new(&config);
-    let mut store = DynamoStore::new(index.clone(), table.clone());
+    let mut store = DynamoStore::new(aws_sdk_dynamodb::Client::new(&config), table);
     if let Ok(id) = std::env::var("SETTLERS_SERVER_ID") {
         store = store.with_owner(id);
     } else if let Ok(id) = std::env::var("SETTLERS_GAME_ID") {
         store = store.with_assigned_game(id);
     }
-    Ok((
-        Arc::new(store),
-        Arc::new(FirehoseArchive::new(
+    let mut archive: Arc<dyn Archive> =
+        Arc::new(S3Archive::new(aws_sdk_s3::Client::new(&config), bucket));
+    if let Ok(stream) = std::env::var("SETTLERS_FIREHOSE_STREAM") {
+        anyhow::ensure!(
+            stream.split(',').all(|name| !name.trim().is_empty()),
+            "SETTLERS_FIREHOSE_STREAM contains an empty stream name"
+        );
+        archive = Arc::new(FirehoseArchive::new(
+            archive,
             aws_sdk_firehose::Client::new(&config),
-            aws_sdk_s3::Client::new(&config),
             stream,
-            bucket,
-            index,
-            table,
-        )),
-    ))
+        ));
+    }
+    Ok((Arc::new(store), archive))
 }
 #[cfg(not(feature = "aws"))]
 async fn aws_storage() -> anyhow::Result<(Arc<dyn Store>, Arc<dyn Archive>)> {

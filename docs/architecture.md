@@ -69,7 +69,7 @@ JWT `sub` owns membership; client-supplied seats cannot impersonate another play
 
 `GameView` and `EventBatch` are the only participant projections. Full snapshots, random seeds, command replay inputs, private preferences, and hidden hands stay behind server storage access. Views include exact public bank-stack counts and availability flags. Conservation can therefore reveal combined opponent holdings and resources returned to the bank between snapshots. Public production and trades reveal the normal public information; individual development draws and discard types are omitted from broadcasts. The public theft event includes only thief, victim, and count. A separate `theft_details` event reveals the resource only to those two seated identities; the same projection protects live frames and paginated history. Authoritative archives are research data, not a client download API.
 
-Storage warnings use typed/loggable error context without tokens. Queue pressure, archive lag, and lost connections have explicit behaviors. The current history implementation reads a game's archive slices and merges pending outbox records for a consistent cursor; large research histories should use Athena or add a bounded archive index/cache rather than repeatedly scanning whole games through REST.
+Storage warnings use typed/loggable error context without tokens. Queue pressure, archive lag, and lost connections have explicit behaviors. History reads exact sequence ranges and merges pending outbox records for a consistent cursor. S3 history batches cover 100 positions each, so REST pagination and archive confirmation perform bounded reads without listing objects or scanning whole games. Athena remains the separate research query path.
 
 Explicit agent-only research rooms provide a separate authorized spectator
 projection: `research_hands` exposes all current hands, and research spectator
@@ -101,9 +101,10 @@ The main remaining risks are:
 - Search budgets use a clock and mutable caches. Reproducible tests should use fixed
   node budgets and an injected clock; latency/playing-strength claims need arena
   measurements rather than ordinary unit tests.
-- AWS sequence indexing bounds reads but retains a second copy of every record.
-  Retention or S3 range-index designs need a separate operational policy and
-  migration; silently deleting index entries would break online replay history.
+- Partially filled S3 history batches are rewritten as new records arrive.
+  Superseded versions expire after one day, while current history remains durable.
+  PUT frequency still depends on archive flush frequency; further batching should
+  be measured against delivery latency and the bounded outbox.
 - Full game, failure-injection, fixed replay, and conservation tests cover distinct
   risks. They do not prove all rule combinations. More targeted development-card,
   retirement, discard, and simultaneous trade scenarios remain useful additions.

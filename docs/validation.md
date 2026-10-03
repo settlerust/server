@@ -1,4 +1,27 @@
-# Validation record — 2026-10-01
+# Validation record — 2026-10-03
+
+The S3 history implementation passes Rust formatting and workspace Clippy with all
+targets/features and warnings denied. The new AWS SDK regression tests compile.
+Terraform formatting and provider-backed validation pass. The companion hosted
+service passes application and infrastructure typechecking and all 88 unit tests.
+TypeScript client checking and its test pass; strict Python mypy and two client
+tests pass. No protocol or generated client shapes changed.
+
+Runtime Rust validation remains pending: compiling the AWS SDK for the test suite
+failed with `No space left on device`. The new S3 tests have not executed, and no
+passing runtime result is claimed. DynamoDB Local integration also remains pending
+because the Docker daemon is stopped. No live AWS deployment, archive import,
+DynamoDB archive deletion, or cost/latency benchmark was performed.
+
+The new compiled regressions cover fixed gzip batch ranges, concurrent conditional
+updates, identical retries, conflicting records, bounded conflict retries, lost
+write acknowledgments, partial multi-batch failures, read-back failures and outbox
+recovery, public history gaps and pending tails, cursor overflow, bounded compressed
+and decoded sizes, corrupt batches, fixed base-v9 import/export, and optional
+Firehose partial failures. Rerun the full all-feature Rust suite with sufficient
+build-cache space before deployment.
+
+## Validation record — 2026-10-01
 
 The incremental open-source preparation passed `cargo fmt --all --check`, workspace
 Clippy with all targets/features and warnings denied, and the full all-feature Rust

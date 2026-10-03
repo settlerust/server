@@ -8,52 +8,66 @@ The local adapter uses SQLite WAL with `synchronous=FULL`. In one `IMMEDIATE` tr
 
 The server publishes neither a success nor new state until commit succeeds. After ambiguous failure it reads state back and compares version plus state hash. A confirmed matching commit returns success; a conflicting durable version replaces stale actor state and returns a conflict. Client retries use the original UUID and expected version.
 
-## Bounded outbox and indexed history
+## Bounded outbox and S3 history
 
 The transactional outbox holds at most 256 pending records per game. A full outbox
-returns `backpressure` until archive delivery succeeds. The durable history is a
-separate store: sequence-named local files, or immutable DynamoDB
-`ARCHIVE#<20-digit sequence>` items. AWS uses the existing `(game_id, kind)` table;
-`STATE`, `EVENT#…`, ownership manifests, and `ARCHIVE#…` have distinct keys.
+returns `backpressure` until archive delivery succeeds. DynamoDB stores the current
+`STATE`, temporary `EVENT#…` outbox, and ownership manifests. Permanent replay
+history lives in S3; the archive adapter never reads or writes DynamoDB.
 
-The archive worker sends pending events to Firehose and writes the immutable index.
-A conditional index write accepts an existing entry only if the entire record is
-identical. Partial failures leave the outbox available for retry. After delivery,
-the worker reads only the pending sequence window, compares complete records, and
-prunes the confirmed prefix. A crash may resend Firehose events; analytics readers
-must deduplicate `(game_id, sequence)`.
+AWS history uses gzip JSONL batches under
+`history/v1/game_id=UUID/batch-<20-digit first sequence>.jsonl.gz`. Each key covers
+100 fixed sequence positions: 1–100, 101–200, and so on. A partial batch is written
+immediately, so slow games and final records do not wait for a full batch. Updating
+it merges identical records and rejects conflicting duplicates. `If-None-Match`
+creates a new object; `If-Match` fences updates against the ETag read before the
+merge. Concurrent workers reload and merge on a conditional conflict, with a
+bounded retry count. A batch containing all 100 positions needs no further writes.
+
+After delivery, the worker reads only the pending sequence window, compares whole
+records, and prunes the confirmed prefix. A failed write, lost acknowledgment,
+read-back failure, or exhausted conflict retry leaves the outbox available.
+Restart or reassignment restores the latest snapshot and resumes this delivery;
+reconstructing old history is unnecessary for recovery or game migration.
 
 REST history reads the outbox first, then a window of at most 100 archive positions.
-Local mode opens those exact filenames without listing the directory. AWS queries
-that exact sort-key range with consistent reads and follows DynamoDB pagination
-within the range. Missing records stop the public page and set `archive_pending`;
-readers never skip a gap to invent a continuous history. The current snapshot bounds
-the page, and batches with no visible events still advance its cursor. Records are
-projected for the authenticated caller; private inputs never enter the response.
+Local mode opens exact sequence filenames. AWS fetches at most two S3 batches for a
+public page; internal 256-position verification fetches at most four. Object sizes,
+decoded sizes, and record counts are bounded. Missing positions stop the public
+page and set `archive_pending`; readers never skip gaps. Snapshot versions bound
+the response, and redacted empty batches still advance its cursor. Authentication
+and participant-specific projection apply before records reach a client.
 
-The immutable index is the durable replay source used by online readers. Firehose
-acceptance plus an index write does not prove that S3 buffering has completed.
-S3 remains the compressed analytics/export copy under `events/game_id=UUID/`.
-This design adds one index write and stored copy per record, plus occasional retry
-reads. It removes S3 listing, whole-object downloads, decompression, and full-game
-scans from history requests and archive polling. Read work is bounded by page size;
-index storage still grows with retained history.
+`SETTLERS_FIREHOSE_STREAM` optionally enables the existing raw analytics delivery
+under `events/game_id=UUID/`. Configured analytics sends precede S3 history writes;
+a failed send leaves the outbox available for retry. Firehose acceptance does not
+confirm an S3 history write. A crash may resend analytics events, whose consumers
+must deduplicate `(game_id, sequence)`. Raw analytics JSON includes `input_json`
+and `public_json` columns for Athena; history batches store canonical replay
+records. Both copies contain private data.
 
-Existing base-v9 S3 games need an explicit index import before their archived portion
-is available through online history. Run this once per selected game with the AWS
-storage environment configured:
+Batch writes occur once per affected sequence range in each delivery, rather than
+once per record. Partially filled ranges incur additional PUTs as new records
+arrive. The versioned bucket expires superseded `history/v1/` object versions after
+one day; it retains current history and leaves raw analytics objects unaffected.
+S3 lifecycle expiration is asynchronous. Online paths never list S3 objects or read
+a whole game's archive. `Archive::read` is reserved for explicit offline export.
+
+Existing base-v9 Firehose exports need a one-time batch import before their archived
+portion is available through online history. Configure AWS credentials and
+`SETTLERS_ARCHIVE_BUCKET`, then run this once per selected game:
 
 ```sh
 cargo run -p server --features aws --bin archive-import -- GAME_UUID
 ```
 
-This offline command reads the selected game's S3 archive, verifies every replay
-hash, then creates immutable index entries without resending Firehose events.
-Retries are safe. Startup and request handlers never perform this import.
-
-Archive JSON includes typed `input` and `public` fields, plus `input_json` and
-`public_json` string columns for Athena. These query columns are added at delivery;
-the index stores the canonical record. They contain private research data.
+The command reads the selected export, verifies every replay hash, and writes
+history batches without resending Firehose events. Retries are safe. Startup and
+request handlers never perform this import. Runtime IAM needs `s3:GetObject` and
+`s3:PutObject` on `history/v1/*`; deploy this additive permission before running the
+new adapter. Existing DynamoDB `ARCHIVE#…` entries are no longer used and are not
+automatically deleted. After verifying their S3 replacement, their explicit
+cleanup can reclaim storage without changing `STATE`, outbox, or ownership items.
 
 ## Shared-process ownership
 
@@ -124,7 +138,7 @@ CROSS JOIN UNNEST(CAST(json_parse(public_json) AS ARRAY(JSON))) AS t(event)
 ORDER BY sequence;
 ```
 
-`input_json` includes seed and private participant actions. Give research archive/Glue/Athena access only to research roles. Browser/player JWTs grant no AWS access. The server runtime IAM policy permits current-state/outbox operations, Firehose sends, and archive reads; it does not grant Athena execution or S3 deletion.
+`input_json` includes seed and private participant actions. Give research archive/Glue/Athena access only to research roles. Browser/player JWTs grant no AWS access. The server runtime IAM policy permits current-state/outbox operations, optional Firehose sends, and history reads/writes; it does not grant Athena execution or S3 deletion.
 
 
 ## Snapshot validation
