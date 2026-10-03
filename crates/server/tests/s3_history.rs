@@ -110,10 +110,12 @@ async fn archive_readback_failure_keeps_outbox_and_snapshot_recoverable() {
     let h = Harness::new().await;
     let fixture = s3::Fixture::new().await;
     let archive = fixture.archive();
+    fixture.state.lock().unwrap().fail_get = Some(2);
     let service = GameService::restore(h.store.clone(), archive.clone(), 0)
         .await
         .unwrap();
-    fixture.state.lock().unwrap().fail_get = Some(2);
+    assert_eq!(h.record_count().await, 1);
+    fixture.state.lock().unwrap().fail_get = Some(3);
     assert!(service.flush_archive().await.is_err());
     assert_eq!(h.store.pending(&h.id).await.unwrap().len(), 1);
     assert_eq!(h.store.load(&h.id).await.unwrap().unwrap().version, 1);
@@ -138,11 +140,11 @@ async fn lost_s3_write_acknowledgment_retries_identically_and_prunes_only_after_
     let h = Harness::new().await;
     let fixture = s3::Fixture::new().await;
     let archive = fixture.archive();
+    fixture.state.lock().unwrap().fail_put_after_write = true;
     let service = GameService::restore(h.store.clone(), archive, 0)
         .await
         .unwrap();
-    fixture.state.lock().unwrap().fail_put_after_write = true;
-    assert!(service.flush_archive().await.is_err());
+    assert!(!fixture.state.lock().unwrap().fail_put_after_write);
     assert_eq!(h.record_count().await, 1);
     service.flush_archive().await.unwrap();
     assert_eq!(h.record_count().await, 0);
@@ -375,11 +377,11 @@ async fn optional_firehose_partial_failure_keeps_s3_and_outbox_untouched() {
         fixture.firehose.clone(),
         "test-stream".into(),
     ));
+    fixture.state.lock().unwrap().fail_firehose = true;
     let service = GameService::restore(h.store.clone(), archive.clone(), 0)
         .await
         .unwrap();
-    fixture.state.lock().unwrap().fail_firehose = true;
-    assert!(service.flush_archive().await.is_err());
+    assert!(!fixture.state.lock().unwrap().fail_firehose);
     assert_eq!(h.record_count().await, 1);
     assert!(fixture.state.lock().unwrap().objects.is_empty());
     service.flush_archive().await.unwrap();

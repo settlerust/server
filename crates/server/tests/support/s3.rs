@@ -50,6 +50,7 @@ impl Fixture {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let app = axum::Router::new()
+            .route("/{bucket}/{*key}", axum::routing::any(object_response))
             .fallback(response)
             .with_state(state.clone());
         let task = tokio::spawn(async move {
@@ -121,13 +122,24 @@ async fn response(
     axum::extract::State(shared): axum::extract::State<Arc<Mutex<State>>>,
     request: axum::extract::Request,
 ) -> Response {
+    respond(shared, request, String::new()).await
+}
+
+async fn object_response(
+    axum::extract::State(shared): axum::extract::State<Arc<Mutex<State>>>,
+    axum::extract::Path((_bucket, key)): axum::extract::Path<(String, String)>,
+    request: axum::extract::Request,
+) -> Response {
+    // Path extraction decodes the key exactly as S3 interprets the request URI.
+    respond(shared, request, key).await
+}
+
+async fn respond(
+    shared: Arc<Mutex<State>>,
+    request: axum::extract::Request,
+    path: String,
+) -> Response {
     let method = request.method().clone();
-    let path = request
-        .uri()
-        .path()
-        .strip_prefix("/test-bucket/")
-        .unwrap_or("")
-        .to_owned();
     let headers = request.headers().clone();
     let query = reqwest::Url::parse(&format!("http://fixture{}", request.uri()))
         .unwrap()
