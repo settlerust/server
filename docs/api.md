@@ -13,7 +13,7 @@ Content-Type: application/json
 {"name":"policy-a"}
 ```
 
-Response: `{ "token": "JWT", "subject": "stable-UUID", "expires_at": 1234567890 }`. Save the token. Subsequent REST requests use `Authorization: Bearer JWT`. Tokens expire after seven days; `POST /v1/auth/refresh` with a still-valid JWT returns a renewed token for the same subject. A new guest request creates a new identity, even with the same name.
+Response: `{ "token": "JWT", "subject": "stable-UUID", "expires_at": 1234567890 }`. Save the token. Subsequent REST requests use `Authorization: Bearer JWT`. Tokens expire after 30 days; `POST /v1/auth/refresh` with a still-valid JWT returns a renewed token for the same subject. A new guest request creates a new identity, even with the same name.
 
 JWT verification fixes HS256, issuer `server`, audience `settlers-v1`, and validates signature, expiry, not-before, and issued-at. Local signing keys persist across process restarts. Set a stable `SETTLERS_JWT_SECRET` of at least 32 bytes when managing the key externally. `SETTLERS_MODE=production` disables the guest provider. Additional providers implement `IdentityProvider` and register through `Auth::with_provider`.
 
@@ -95,7 +95,7 @@ Limits: 16 communication/offer commands per seat per minute, four open offers pe
 
 ## Private theft receipts
 
-The public `rule/stole` event contains `player`, `victim`, and `count`. The thief and victim additionally receive `theft_details { player, victim, resource }` in the same batch. Other seated players and standard spectators never receive that private event, whether via WebSocket, REST history, or reconnect recovery. Clients should render the public count when no authorized receipt is present. Historical `base-v1`/`base-v2` records contain only the public event; new records use `base-v4` without changing wire protocol version 1.
+The public `rule/stole` event contains `player`, `victim`, and `count`. The thief and victim additionally receive `theft_details { player, victim, resource }` in the same batch. Other seated players and standard spectators never receive that private event, whether via WebSocket, REST history, or reconnect recovery. Clients should render the public count when no authorized receipt is present. Participant wire protocol remains version 1.
 
 ## WebSocket
 
@@ -137,6 +137,10 @@ Only research spectators receive `GameView.research_hands`, containing each
 seat’s current resource and development hand, plus directed messages and theft
 receipts in event history. The standard WebSocket delivers this same projection
 in every snapshot. Every seated AI still receives its own private view only.
+Retired agents and identities whose seats are controlled by built-in computers
+do not acquire spectator permissions. Their snapshots and history omit research
+hands, directed spectator messages, and private theft receipts. This applies to
+both live rooms and projections of replayed records.
 Future randomness, unrevealed deck order, and private filters are never exposed.
 
 See [development.md](development.md#research-spectator-tables-and-safe-setup-corrections)
@@ -159,8 +163,7 @@ Before the opening rolls, each player must open a game WebSocket and send `set_r
 `ready: true`. Readiness appears in `members[].ready` and `ready_changed` events.
 The last socket disconnect clears that player's readiness in the lobby; another
 open tab preserves it. Changing settings clears everyone's confirmation. Remote
-AI uses the same command as humans. Archived versions before `base-v5` retain their
-original start behavior when replayed.
+AI uses the same command as humans. Opening rolls confirm readiness once; `start` does not ask players to confirm again.
 
 Readiness is a lobby decision. Once `roll_for_order` commits an opening,
 `set_ready` is no longer accepted, disconnects do not reset readiness, and `start`
@@ -195,7 +198,7 @@ equal and older revisions cannot restore a previous name.
 REST views, WebSocket snapshots/events, and paginated history use the room's
 current display-name projection, including for events recorded before a privacy
 change. Private persistence and restricted research archives retain replay inputs.
-An empty display-name map is omitted from serialization to preserve legacy hashes.
+An empty display-name map is omitted from serialization.
 
 
 ## Presence and disconnected seats

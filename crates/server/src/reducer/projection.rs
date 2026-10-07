@@ -3,6 +3,15 @@ use crate::{
     model::*,
 };
 use settlers_protocol::*;
+
+fn research_spectator(room: &Room, subject: &str) -> bool {
+    // Revoking control of a seat does not grant spectator access to hidden hands.
+    room.research
+        && room
+            .member(subject)
+            .is_some_and(|member| member.seat.is_none())
+}
+
 fn display_name(room: &Room, subject: &str, fallback: &str) -> String {
     room.display_names.get(subject).map_or_else(
         || crate::identity::legacy_display_name(subject, fallback),
@@ -25,7 +34,7 @@ pub fn view(room: &Room, subject: &str) -> Result<GameView> {
         id: room.id.clone(),
         name: room.name.clone(),
         research: room.research,
-        research_hands: (room.research && seat.is_none())
+        research_hands: research_spectator(room, subject)
             .then(|| {
                 room.game.as_ref().map(|game| {
                     (0..game.settings.players)
@@ -133,7 +142,7 @@ pub fn batch(room: &Room, subject: &str, record: &Record) -> Result<EventBatch> 
             }
             PublicEvent::TheftDetails { player, victim, .. } => (seat
                 .is_some_and(|p| p == *player || p == *victim)
-                || (room.research && seat.is_none()))
+                || research_spectator(room, subject))
             .then(|| event.clone()),
             PublicEvent::Message { from, to, .. } => {
                 if let Some(p) = seat {
@@ -146,7 +155,7 @@ pub fn batch(room: &Room, subject: &str, record: &Record) -> Result<EventBatch> 
                     } else {
                         Some(event.clone())
                     }
-                } else if to.is_none() || room.research {
+                } else if to.is_none() || research_spectator(room, subject) {
                     Some(event.clone())
                 } else {
                     None

@@ -222,6 +222,7 @@ impl BrowserRoom {
         wire((|| {
             let mut saved: Self = decode(checkpoint)?;
             if let Some(room) = &mut saved.room {
+                room.validate()?;
                 let elapsed = (now as u64).saturating_sub(paused_at as u64);
                 room.deadline_ms = room.deadline_ms.map(|d| d.saturating_add(elapsed));
                 if let Some(discard) = &mut room.discard

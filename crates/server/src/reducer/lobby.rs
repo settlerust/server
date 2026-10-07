@@ -71,22 +71,11 @@ pub(super) fn join(
     });
     Ok(())
 }
-fn can_start(
-    room: &Room,
-    identity: &Identity,
-    require_ready: bool,
-    ready_decided: bool,
-) -> Result<()> {
+fn can_start(room: &Room, identity: &Identity, ready_decided: bool) -> Result<()> {
     if room.seat(&identity.subject).is_none() && identity.subject != room.host {
         return Err(Error::new(
             ErrorCode::Forbidden,
             "only players or the host can start",
-        ));
-    }
-    if !require_ready && identity.subject != room.host {
-        return Err(Error::new(
-            ErrorCode::Forbidden,
-            "only the host can start this lobby",
         ));
     }
     let players: Vec<_> = room.members.iter().filter(|m| m.seat.is_some()).collect();
@@ -96,8 +85,7 @@ fn can_start(
             "fill all player seats before starting",
         ));
     }
-    if require_ready
-        && !ready_decided
+    if !ready_decided
         && players.iter().any(|m| {
             m.resolution.is_none() && m.computer_policy.is_none() && (!m.ready || !m.connected)
         })
@@ -114,12 +102,11 @@ pub(super) fn set_ready(
     identity: &Identity,
     ready: bool,
     events: &mut Vec<PublicEvent>,
-    lock_opening: bool,
 ) -> Result<()> {
     if room.game.is_some() {
         return Err(Error::new(ErrorCode::Conflict, "game already started"));
     }
-    if lock_opening && room.opening.is_some() {
+    if room.opening.is_some() {
         return Err(Error::new(
             ErrorCode::Conflict,
             "readiness was confirmed before the opening rolls",
@@ -147,15 +134,8 @@ pub(super) fn start(
     room: &mut Room,
     identity: &Identity,
     events: &mut Vec<PublicEvent>,
-    require_ready: bool,
-    lock_opening: bool,
 ) -> Result<()> {
-    can_start(
-        room,
-        identity,
-        require_ready,
-        lock_opening && room.opening.is_some(),
-    )?;
+    can_start(room, identity, room.opening.is_some())?;
     if room.game.is_some() {
         return Err(Error::new(ErrorCode::Conflict, "game already started"));
     }
@@ -168,7 +148,7 @@ pub(super) fn start(
     room.game = Some(if room.opening.is_some() {
         opening_state(room)?.0
     } else {
-        // Preserve the original transition for old clients and archived replays.
+        // Without opening rolls the seed determines the first seat.
         State::new(room.settings, room.seed)?
     });
     events.push(PublicEvent::Started);
@@ -235,9 +215,8 @@ pub(super) fn roll_for_order(
     room: &mut Room,
     identity: &Identity,
     events: &mut Vec<PublicEvent>,
-    require_ready: bool,
 ) -> Result<()> {
-    can_start(room, identity, require_ready, false)?;
+    can_start(room, identity, false)?;
     if room.game.is_some() || room.opening.is_some() {
         return Err(Error::new(
             ErrorCode::Conflict,
@@ -263,25 +242,19 @@ pub(super) fn presence(
     connected: bool,
     now: u64,
     events: &mut Vec<PublicEvent>,
-    lock_opening: bool,
-    track_clock: bool,
 ) -> Result<()> {
     let member = room
         .members
         .iter_mut()
         .find(|m| m.identity.subject == subject)
         .ok_or_else(|| Error::new(ErrorCode::Forbidden, "join before connecting"))?;
-    if member.connected == connected
-        && !(track_clock && !connected && member.disconnected_at_ms.is_none())
-    {
+    let unchanged = member.connected == connected;
+    let needs_clock = !connected && member.disconnected_at_ms.is_none();
+    if unchanged && !needs_clock {
         return Err(Error::new(ErrorCode::Conflict, "presence has not changed"));
     }
     member.connected = connected;
-    if !connected
-        && room.game.is_none()
-        && (!lock_opening || room.opening.is_none())
-        && member.ready
-    {
+    if !connected && room.game.is_none() && room.opening.is_none() && member.ready {
         member.ready = false;
         if let Some(seat) = member.seat {
             events.push(PublicEvent::ReadyChanged { seat, ready: false });

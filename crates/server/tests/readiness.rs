@@ -140,7 +140,7 @@ async fn disconnects_clear_readiness_only_before_the_opening_rolls() {
 }
 
 #[tokio::test]
-async fn existing_openings_can_start_even_if_an_older_server_cleared_ready_flags() {
+async fn opening_confirmation_is_independent_of_later_ready_flags() {
     let h = Harness::new().await;
     for player in 1..4 {
         h.command(
@@ -167,52 +167,4 @@ async fn existing_openings_can_start_even_if_an_older_server_cleared_ready_flags
     )
     .unwrap();
     assert!(started.game.is_some());
-}
-
-#[tokio::test]
-async fn historical_opening_disconnects_keep_their_original_replay_behavior() {
-    let h = Harness::new().await;
-    for player in 1..4 {
-        h.command(
-            player,
-            Command::Join {
-                name: format!("Player {player}"),
-                spectator: false,
-            },
-        )
-        .await;
-    }
-    h.ready_all().await;
-    h.command(0, Command::RollForOrder).await;
-    let room = h.room().await;
-    let (mut historical, mut record) = reducer::reduce(
-        &room,
-        server::model::Input::Presence {
-            subject: identity(0).subject,
-            connected: false,
-        },
-        3,
-    )
-    .unwrap();
-    historical.members[0].ready = false;
-    // Version 6 predates persisted disconnect clocks.
-    historical.members[0].disconnected_at_ms = None;
-    record.engine_version = "base-v6".into();
-    record.state_hash = reducer::state_hash(&historical).unwrap();
-    record.public.insert(
-        0,
-        PublicEvent::ReadyChanged {
-            seat: 0,
-            ready: false,
-        },
-    );
-    let mut records = h.store.pending(&h.id).await.unwrap();
-    records.push(record);
-    let replayed = reducer::replay(&records).unwrap();
-    assert_eq!(
-        reducer::state_hash(&replayed).unwrap(),
-        reducer::state_hash(&historical).unwrap()
-    );
-    assert!(replayed.opening.is_some());
-    assert!(!replayed.members[0].ready);
 }

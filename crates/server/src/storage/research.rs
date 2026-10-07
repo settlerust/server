@@ -77,6 +77,9 @@ impl Archive for ResearchArchive {
         // Never make raw read-back eligible for pruning before research delivery succeeds.
         self.archive.deliver(records).await
     }
+    async fn read_page(&self, id: &str, after: u64, limit: usize) -> Result<Vec<Record>> {
+        self.archive.read_page(id, after, limit).await
+    }
     async fn read(&self, id: &str) -> Result<Vec<Record>> {
         self.archive.read(id).await
     }

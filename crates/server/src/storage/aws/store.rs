@@ -1,18 +1,4 @@
-//! Official AWS SDK adapters. Events stay in the DynamoDB outbox until visible in S3.
-use super::{Archive, Store};
-use crate::{
-    error::{Error, Result},
-    model::{Record, Room},
-};
-use async_trait::async_trait;
-use aws_sdk_dynamodb::{
-    Client as Dynamo,
-    types::{AttributeValue as A, Delete, Put, TransactWriteItem},
-};
-use aws_sdk_firehose::{Client as Firehose, types::Record as FirehoseRecord};
-use aws_sdk_s3::Client as S3;
-use std::collections::HashMap;
-
+use super::*;
 pub struct DynamoStore {
     client: Dynamo,
     table: String,
@@ -38,19 +24,6 @@ impl DynamoStore {
         self.owner = Some(id);
         self
     }
-}
-fn key(id: &str, sort: &str) -> HashMap<String, A> {
-    HashMap::from([
-        ("game_id".into(), A::S(id.into())),
-        ("kind".into(), A::S(sort.into())),
-    ])
-}
-fn decode<T: serde::de::DeserializeOwned>(item: &HashMap<String, A>) -> Result<T> {
-    let data = item
-        .get("data")
-        .and_then(|a| a.as_s().ok())
-        .ok_or_else(|| Error::storage("missing DynamoDB data"))?;
-    serde_json::from_str(data).map_err(Error::storage)
 }
 #[async_trait]
 impl Store for DynamoStore {
@@ -80,7 +53,9 @@ impl Store for DynamoStore {
         if !item.contains_key("data") {
             return Ok(None);
         }
-        decode(item).map(Some)
+        let room: Room = decode(item)?;
+        room.validate()?;
+        Ok(Some(room))
     }
     async fn ids(&self) -> Result<Vec<String>> {
         if let Some(owner) = &self.owner {
@@ -145,7 +120,7 @@ impl Store for DynamoStore {
         Ok(ids)
     }
     async fn commit(&self, expected: u64, room: &Room, record: &Record) -> Result<()> {
-        if self.pending(&room.id).await?.len() >= super::OUTBOX_LIMIT {
+        if self.pending(&room.id).await?.len() >= super::super::OUTBOX_LIMIT {
             return Err(Error::new(
                 settlers_protocol::ErrorCode::Backpressure,
                 "archive horizon is full",
@@ -275,116 +250,5 @@ impl Store for DynamoStore {
             tx.send().await.map_err(Error::storage)?;
         }
         Ok(())
-    }
-}
-
-pub struct FirehoseArchive {
-    firehose: Firehose,
-    s3: S3,
-    stream: String,
-    bucket: String,
-}
-impl FirehoseArchive {
-    pub fn new(firehose: Firehose, s3: S3, stream: String, bucket: String) -> Self {
-        Self {
-            firehose,
-            s3,
-            stream,
-            bucket,
-        }
-    }
-}
-#[async_trait]
-impl Archive for FirehoseArchive {
-    async fn deliver(&self, records: &[Record]) -> Result<()> {
-        // Bound batches below Firehose's 500 records / 4 MiB request limit.
-        for (stream, records) in super::firehose_batches(&self.stream, records) {
-            for chunk in records.chunks(25) {
-                let mut request = self
-                    .firehose
-                    .put_record_batch()
-                    .delivery_stream_name(stream);
-                for record in chunk {
-                    let mut bytes = super::encode_record(record)?;
-                    bytes.push(b'\n');
-                    if bytes.len() > 100_000 {
-                        return Err(Error::storage("oversized Firehose record"));
-                    }
-                    request = request.records(
-                        FirehoseRecord::builder()
-                            .data(aws_sdk_firehose::primitives::Blob::new(bytes))
-                            .build()
-                            .map_err(Error::storage)?,
-                    );
-                }
-                let response = request.send().await.map_err(Error::storage)?;
-                if response.failed_put_count > 0 {
-                    return Err(Error::storage(
-                        "partial Firehose batch failure; retrying is safe",
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-    async fn read(&self, id: &str) -> Result<Vec<Record>> {
-        uuid::Uuid::parse_str(id).map_err(Error::storage)?;
-        let mut cursor = None;
-        let mut records = vec![];
-        loop {
-            let page = self
-                .s3
-                .list_objects_v2()
-                .bucket(&self.bucket)
-                .prefix(format!("events/game_id={id}/"))
-                .set_continuation_token(cursor)
-                .send()
-                .await
-                .map_err(Error::storage)?;
-            for object in page.contents() {
-                if let Some(key) = object.key() {
-                    let result = self
-                        .s3
-                        .get_object()
-                        .bucket(&self.bucket)
-                        .key(key)
-                        .send()
-                        .await
-                        .map_err(Error::storage)?;
-                    let bytes = result
-                        .body
-                        .collect()
-                        .await
-                        .map_err(Error::storage)?
-                        .into_bytes();
-                    let decoded = if bytes.starts_with(&[0x1f, 0x8b]) {
-                        use std::io::Read;
-                        let mut out = vec![];
-                        flate2::read::GzDecoder::new(&bytes[..])
-                            .read_to_end(&mut out)
-                            .map_err(Error::storage)?;
-                        out
-                    } else {
-                        bytes.to_vec()
-                    };
-                    for line in decoded
-                        .split(|&b| b == b'\n')
-                        .filter(|line| !line.is_empty())
-                    {
-                        let record: Record =
-                            serde_json::from_slice(line).map_err(Error::storage)?;
-                        if record.game_id != id {
-                            return Err(Error::storage("archive partition contains another game"));
-                        }
-                        records.push(record);
-                    }
-                }
-            }
-            cursor = page.next_continuation_token;
-            if cursor.is_none() {
-                break;
-            }
-        }
-        super::merge_records(records)
     }
 }

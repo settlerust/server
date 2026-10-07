@@ -1,4 +1,4 @@
-//! Optional external token verification for an independently operated lobby service.
+//! Verify signed game grants from an external identity service.
 use crate::{
     auth::Identity,
     error::{Error, Result},
@@ -6,6 +6,8 @@ use crate::{
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use settlers_protocol::{Command, ErrorCode};
+
+pub(crate) const MAX_TOKEN_LIFETIME: u64 = 30 * 86400;
 
 pub struct Verifier {
     key: DecodingKey,
@@ -77,7 +79,7 @@ impl Verifier {
             || claims.exp <= now
             || claims.nbf > now
             || claims.iat > now
-            || claims.exp.saturating_sub(claims.iat) > 3600
+            || claims.exp.saturating_sub(claims.iat) > MAX_TOKEN_LIFETIME
             || claims.sub.is_empty()
             || claims.sub.len() > 200
             || uuid::Uuid::parse_str(&claims.game_id).is_err()
@@ -156,6 +158,6 @@ impl Grant {
 fn denied() -> Error {
     Error::new(
         ErrorCode::Forbidden,
-        "the external lobby has not granted this action",
+        "the external issuer has not granted this action",
     )
 }

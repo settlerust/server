@@ -4,7 +4,9 @@
 crates/engine       pure rules, packed state, exact chance branches, redacted observations
 crates/protocol     typed REST/WS commands, views, events; JSON Schema generator
 crates/server       auth → per-game FIFO actor → pure room reducer → durable commit → broadcast
-crates/policies     fast_builder/ and eta_builder/ with shared planning helpers
+crates/policies     example agents, shared planning helpers, remote runners
+crates/expectimax   sampled hidden states, expectimax search, learned evaluation
+crates/arena        offline tournaments and self-play training
 clients/            Rust, TypeScript, Python libraries
 infra/              DynamoDB, Firehose, S3, Glue, Athena, runtime IAM policy
 ```
@@ -28,6 +30,33 @@ The random stream is ChaCha12 with a 256-bit seed and saved word cursor. Rejecti
 
 ## Server boundaries
 
+The design uses pure transitions surrounded by stateful I/O adapters. `State`,
+`Action`, and `Phase` describe the rule state machine; `apply` computes a successor.
+The room reducer adds identities, trade offers, deadlines, and replay receipts,
+with the clock passed in as an argument. Neither reducer performs network or
+storage operations. Methods on the state structs provide queries and compact
+representation helpers rather than an inheritance hierarchy.
+
+`GameService` is a shared handle to the actor registry. Each actor owns a mutable
+copy of the last durable room. `Store`, `Archive`, and `IdentityProvider` are
+traits for replaceable I/O adapters; tests inject failures through those traits.
+The policy/search layer has its own decision state and caches, and reads redacted
+observations instead of authoritative rooms.
+
+A command passes through these steps:
+
+1. Transport parses the request and authenticates its identity and grant.
+2. The game actor checks duplicate receipts and applies due deadlines.
+3. The pure reducer validates the command and builds a room and replay record.
+4. Storage conditionally commits the snapshot and outbox record in one transaction.
+5. The actor adopts the confirmed state, broadcasts the record, and returns a receipt.
+6. Each participant receives a separately projected view or event batch.
+
+If storage reports an ambiguous failure, the actor loads the durable snapshot and
+compares its version and hash before deciding whether the command committed.
+Archive delivery is separate: an acknowledgment from the destination is not
+enough to prune the outbox; read-back must match the entire replay record.
+
 Each game has one bounded Tokio command queue and one owner actor. REST, WebSocket, timers, and presence updates enter this queue. Pure room reducers validate identity, turn/version, trade status, communication filters, and game rules. A successful action yields a new room and a versioned record. Persistence must succeed before the actor publishes state or acknowledges the request.
 
 Multiple games can progress independently; blocking local SQLite/file operations run through `spawn_blocking`. The actor does no synchronous file I/O. A command's arrival order is the order it enters that game's queue after authentication and parsing. Broadcast consumers receive public records and independently redacted private snapshots.
@@ -38,12 +67,44 @@ The deployment model is **one authoritative server process per game set**. Remot
 
 JWT `sub` owns membership; client-supplied seats cannot impersonate another player. Display names are not identity. Production providers map verified external identities to stable subjects before JWT issuance. The built-in guest provider is local-only.
 
-`GameView` and `EventBatch` are the only participant projections. Full snapshots, random seeds, command replay inputs, private preferences, and hidden hands stay behind server storage access. Exact bank-stack counts are private; views disclose only whether each resource is available. Public production and trades reveal the normal public information; individual development draws and discard types are omitted from broadcasts. The public theft event includes only thief, victim, and count. A separate `theft_details` event reveals the resource only to those two seated identities; the same projection protects live frames and paginated history. Authoritative archives are research data, not a client download API.
+`GameView` and `EventBatch` are the only participant projections. Full snapshots, random seeds, command replay inputs, private preferences, and hidden hands stay behind server storage access. Views include exact public bank-stack counts and availability flags. Conservation can therefore reveal combined opponent holdings and resources returned to the bank between snapshots. Public production and trades reveal the normal public information; individual development draws and discard types are omitted from broadcasts. The public theft event includes only thief, victim, and count. A separate `theft_details` event reveals the resource only to those two seated identities; the same projection protects live frames and paginated history. Authoritative archives are research data, not a client download API.
 
-Storage warnings use typed/loggable error context without tokens. Queue pressure, archive lag, and lost connections have explicit behaviors. The current history implementation reads a game's archive slices and merges pending outbox records for a consistent cursor; large research histories should use Athena or add a bounded archive index/cache rather than repeatedly scanning whole games through REST.
+Storage warnings use typed/loggable error context without tokens. Queue pressure, archive lag, and lost connections have explicit behaviors. History reads exact sequence ranges and merges pending outbox records for a consistent cursor. S3 history batches cover 100 positions each, so REST pagination and archive confirmation perform bounded reads without listing objects or scanning whole games. Athena remains the separate research query path.
 
 Explicit agent-only research rooms provide a separate authorized spectator
 projection: `research_hands` exposes all current hands, and research spectator
 events include directed chat and theft receipts. Seated identities keep their
 normal private projection, including when the room is a research game. This
 opt-in mode never exposes future randomness, future deck order or private filters.
+
+## Maintainability and remaining debt
+
+The implementation is a functional core with stateful adapters. Struct methods do
+not imply an object hierarchy: rule transitions return values, while actors and
+storage adapters own mutable state, queues, and connections. This split makes rule,
+room, and projection behavior testable without a running server.
+
+Current module boundaries isolate creation, command authorization, replay hashing,
+and versioned room postprocessing. Search separates configuration/evaluation/reporting from
+candidate generation and simulation. Comments explain present constraints such as
+commit-before-broadcast, shared scenario comparisons, privacy, and bounded I/O.
+
+The main remaining risks are:
+
+- Packed arrays and public authoritative fields still permit invalid construction
+  inside trusted Rust code. Boundary validators catch serialized corruption; they
+  do not make every invalid state unrepresentable. Seat/location newtypes and
+  narrower mutation APIs would be a separate representation change.
+- Bargaining evaluation remains a substantial function, and the pure reducer still
+  clones the room. Further decomposition should follow measured complexity; clone
+  or allocation changes need solver and server workload benchmarks.
+- Search budgets use a clock and mutable caches. Reproducible tests should use fixed
+  node budgets and an injected clock; latency/playing-strength claims need arena
+  measurements rather than ordinary unit tests.
+- Partially filled S3 history batches are rewritten as new records arrive.
+  Superseded versions expire after one day, while current history remains durable.
+  PUT frequency still depends on archive flush frequency; further batching should
+  be measured against delivery latency and the bounded outbox.
+- Full game, failure-injection, fixed replay, and conservation tests cover distinct
+  risks. They do not prove all rule combinations. More targeted development-card,
+  retirement, discard, and simultaneous trade scenarios remain useful additions.

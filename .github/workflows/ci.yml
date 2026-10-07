@@ -41,7 +41,7 @@ jobs:
           done
           docker compose -f infra/compose.yaml logs dynamodb
           exit 1
-      - run: SETTLERS_TEST_DYNAMODB_URL=http://127.0.0.1:18000 cargo test -p server --features aws --test aws --locked -- --ignored
+      - run: SETTLERS_TEST_DYNAMODB_URL=http://127.0.0.1:18000 cargo test -p server --features aws --test aws --test ownership_aws --locked -- --ignored
       - run: cargo run -q -p settlers-protocol --bin schema > docs/protocol.schema.json && python3 scripts/generate_clients.py && git diff --exit-code -- docs/protocol.schema.json clients/typescript/src/types.ts clients/python/settlers_client/types.py
   clients:
     runs-on: ubuntu-latest

@@ -1,140 +1,92 @@
-# Settlers research server
+# Settlers Catan server
 
-A Rust implementation of the CATAN base game with authenticated lobbies, remote policies, typed communication, deterministic replay, and durable storage.
-
-The pure engine uses a **54-byte board** and a **240-byte copyable state**. Server identity, timers, messaging, storage, and policy code are separate crates. Tests live in their own directories.
-
-## Run inside a browser
-
-The `server` library also builds to WebAssembly:
-
-```sh
-rustup target add wasm32-unknown-unknown
-cargo build -p server --lib --release --locked --target wasm32-unknown-unknown
-```
-
-The browser entry point is `browser::BrowserRoom`. It uses the same room reducer,
-protocol projections, engine, UUID validation, and idempotent receipts as the
-native service. Native HTTP/WebSocket, JWT signing, SQLite, and AWS dependencies
-are excluded on the WASM target. The browser host provides secure random seed
-bytes, a clock, serialized message handling, and an atomic IndexedDB checkpoint
-before acknowledgments or live notifications. Checkpoints contain private room
-state and remain inside the local server worker. Participant responses use the
-normal redacted projections.
-
-Browser games are local and unverified; their identities and checkpoints cannot
-establish a trusted multiplayer result. The native server remains responsible for
-networked multiplayer and externally validated results. Use `cargo test -p server
---test browser --locked` for the browser adapter regressions, including a complete
-ten-point game.
+A Rust server for running Catan base-game matches and testing agentic players.
+Agents connect through an authenticated HTTP and WebSocket API. The server
+enforces the rules, gives each player a redacted view, saves every accepted
+command, and supports deterministic replay.
 
 ## Run locally
 
-Requires Rust 1.96 or newer. From this repository:
+Install Rust 1.96 or newer, then run from this repository:
 
 ```sh
-cargo run --release -p server --bin server
+cargo run --release --locked -p server --bin server
 ```
 
-In another terminal, run four policies through the authenticated HTTP API:
+The default server listens on `http://127.0.0.1:8080`, uses SQLite, and issues
+local guest credentials. No cloud account or external identity service is needed.
+Check that it is running:
 
 ```sh
-cargo run --release -p settlers-policies --bin arena -- http://127.0.0.1:8080
+curl http://127.0.0.1:8080/healthz
 ```
 
-The arena prints its game ID and the final public state. A faster simulation that bypasses the server is:
+In another terminal, run a complete match with four example agents:
 
 ```sh
-cargo run --release -p settlers-policies --bin simulate -- 100
-cargo run --release -p settlers-engine --bin bench
+cargo run --release --locked -p settlers-policies --bin arena -- http://127.0.0.1:8080
 ```
 
-The `remote` runner also seats either expectimax search (`v1`, `v2`, or
-`v2:{json}`), and `crates/arena` plays paired-seed tournaments offline:
+The runner prints the game ID and final public state. For faster experiments
+without networking or persistence, run the engine directly:
 
 ```sh
-cargo run --release -p settlers-arena --bin tournament -- --seat v2 --seat eta --seat fast --seat eta --seeds 0-15
+cargo run --release --locked -p settlers-policies --bin simulate -- 100
 ```
 
-`train` in the same crate learns n-tuple leaf tables by self-play; a `leaf.tables` path in a `v2:{json}`
-spec seats the search with them. See [docs/expectimax.md](docs/expectimax.md) for both searches, the
-learned leaf, and the arena.
+## Connect your own agent
 
-Local mode stores current state and pending archive events in `data/state.sqlite3`, archived events in `data/archive/game_id=UUID/`, and the persistent JWT signing key in `data/auth.key`. Keep the data directory and each participant's token across restarts.
+Use the [Rust, TypeScript, or Python client examples](docs/clients.md) to
+authenticate, create or join a match, read your seat's observation, and submit
+commands. The [API guide](docs/api.md) describes command IDs, version conflicts,
+WebSocket events, and history pagination. Keep the same credentials and request
+ID when retrying a command whose acknowledgment was lost.
 
-## Build a client or policy
+The engine provides legal actions in the seated observation. Opponent hands,
+the random seed, and future development cards stay private. An explicitly enabled
+agent-only research match can reveal current hands to spectators; seated agents
+still receive only their own hand.
 
-- [API routes and WebSocket protocol](docs/api.md)
-- [Runnable client examples: Rust, TypeScript, Python](docs/clients.md)
-- [Game rules, settings, and timeout behavior](docs/rules.md)
-- [Engine representation and architecture](docs/architecture.md)
-- [Simulation, chance branches, and game-theory research](docs/research.md)
-- [Durability, replay, and archive queries](docs/persistence.md)
-- [AWS deployment configuration](infra/README.md)
-- [Development and tests](docs/development.md)
-- [Recorded validation results and measurements](docs/validation.md)
-- [Generated protocol schema](docs/protocol.schema.json)
+Example policies, expectimax search, and paired-seed offline tournaments are
+included. See the [policy and simulation guide](docs/research.md) and
+[search and tournament guide](docs/expectimax.md) for their configuration.
 
-For LAN policies, set `SETTLERS_BIND=0.0.0.0:8080` and connect clients to the server's LAN address. The server issues each guest a distinct identity; sharing display names does not share seats. A human can host as an observer with `host_as_player: false` and leave all seats available for policies.
+## Local configuration and saved games
 
-## Scope
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SETTLERS_BIND` | `127.0.0.1:8080` | Listening address; use `0.0.0.0:8080` for LAN clients. |
+| `SETTLERS_DATA_DIR` | `data` | SQLite database, archives, and local signing key. |
+| `SETTLERS_ALLOWED_ORIGINS` | Empty | Comma-separated origins allowed for browser HTTP clients. |
 
-The base game supports 3–4 players. Two seats use an explicit research variant with the same board and base rules. Default victory target is 10, discard threshold 7, and turn time 120 seconds. The timeout fallback returns the robber to the desert without stealing, as requested for unattended games.
+Local state is stored in `data/state.sqlite3`, replay records in
+`data/archive/game_id=UUID/`, and the generated signing key in `data/auth.key`.
+Preserve the data directory and participant tokens across restarts. This
+directory contains private state and credentials and is excluded from Git.
 
-Local guest authentication is implemented. `IdentityProvider` is the extension point for GitHub, Google, and email/password authentication. Production mode disables guest issuance; those provider integrations are future work. AWS infrastructure is supplied as Terraform; applying it and running the server in a cloud account are deployment steps.
+The base game supports three or four players, with a two-player research variant.
+Defaults are ten victory points, a discard threshold of seven cards, and
+120-second turns. A turn duration of zero disables turn deadlines. Read the
+[rules guide](docs/rules.md) for setup, trades, development cards, and unattended
+timeout behavior.
 
-## Hosted external authentication
+## Code and validation
 
-An independently operated lobby can run this server in verification-only mode.
-Set `SETTLERS_JWT_PUBLIC_KEY` to an RSA public PEM, `SETTLERS_JWT_ISSUER` to the
-trusted issuer, and `SETTLERS_SERVER_ID` to this process's ownership UUID. A shared
-process hosts multiple games. No private
-signing key or OAuth secret belongs on that server. Guest issuance and refresh are
-disabled. The public `/healthz` endpoint reports readiness without game data.
+The rule engine is independent of networking and storage. Its transitions return
+a new state without changing the input. The server processes each game's commands
+in order and commits state together with its replay record before acknowledging
+or broadcasting a change.
 
-External JWTs use RS256 and audience `settlers-v1`, with `iss`, `sub`, `name`, `iat`,
-`nbf`, `exp`, `server_id`, `game_id`, and `role` (`host`, `player`, or `spectator`). Their maximum
-lifetime is one hour. Tokens must match this server and the requested game; both HTTP and WebSocket
-commands enforce their role. External hosts cannot change game settings after
-admission. The lobby issuer is responsible for admitting players and selecting the
-host before signing grants. POST `/v1/games` creates the assigned UUID once and
-recovers retries from the same host. An optional `name_revision` carries the
-account's display-name revision; see [hosted display names](docs/api.md#hosted-display-names).
+- [Architecture and state representation](docs/architecture.md)
+- [Development, tests, and process smoke checks](docs/development.md)
+- [Persistence, archives, and replay](docs/persistence.md)
+- [Optional AWS storage and deployment](infra/README.md)
+- [JSON protocol schema](docs/protocol.schema.json)
 
-When using AWS storage, the process restores only games in its DynamoDB ownership
-manifest. State writes require both the expected version and matching owner.
-An orchestrator assigns and withdraws ownership transactionally, as described in
-[persistence](docs/persistence.md). Your orchestrator must guarantee one live process
-per ownership UUID and confirm the previous process stopped before replacing it.
-`SETTLERS_MAX_LOADED_GAMES` bounds resident actors. On Fargate, setting
-`SETTLERS_TASK_VCPU` and `SETTLERS_TASK_MEMORY_MIB` enables 30-second CPU, memory,
-command-latency and timer-lag reports in DynamoDB for capacity-aware placement.
-Legacy single-game deployments may use `SETTLERS_GAME_ID` instead of
-`SETTLERS_SERVER_ID`; their tokens omit `server_id`. The server handles
-SIGTERM gracefully. `Dockerfile` builds an AWS-capable image; it contains only the
-public server source and dependencies, with no private orchestration code.
+Run the Rust checks with:
 
-
-## Research Firehose routing
-
-AWS storage requires `SETTLERS_FIREHOSE_STREAM`, the raw replay Firehose destination.
-Optional `SETTLERS_RESEARCH_FIREHOSE_STREAM` sends every durable record to a separate
-research stream before raw archival. It also works with SQLite/local archives when
-built with `--features aws`, so a research machine can submit its games using the
-AWS SDK credential chain. Either variable accepts one stream name or comma-separated
-shards; SHA-256 of the game UUID selects a stable shard. Do not include empty names.
-
-Research records use a stable `event_id` (`game_id:sequence`), `source=game`, timestamp,
-actor, and `payload_json` containing the full replay record. Configure Firehose's
-Glue schema to convert this JSON envelope to Parquet, partition by `game_id`, and
-preserve the raw replay stream's existing `events/game_id=UUID/` gzip JSON path.
-The server does not read Parquet for replay. Research delivery failures retain the
-outbox, and archive pruning still requires identical raw S3/local read-back.
-
-
-Hosted disconnect recovery is enforced by the game actor: after 120 seconds offline,
-the host has 30 seconds to retire the seat or replace it with Expert AI. At 150
-seconds, the server selects Expert automatically. Reconnecting before resolution
-cancels recovery. Retired pieces retain occupancy, return resources to the bank,
-and stop producing or taking turns. Replacement policies run off the actor thread
-with the same redacted seat view as an external player.
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+```

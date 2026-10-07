@@ -43,7 +43,15 @@ impl GameService {
                 );
             }
         }
-        let archived = self.inner.archive.read(id).await?;
+        let archived = self
+            .inner
+            .archive
+            .read_page(
+                id,
+                pending[0].sequence.saturating_sub(1),
+                crate::storage::OUTBOX_LIMIT,
+            )
+            .await?;
         let found: BTreeMap<_, _> = archived.iter().map(|r| (r.sequence, r)).collect();
         let mut through = None;
         for record in &pending {
@@ -84,23 +92,31 @@ impl GameService {
         }
         // Read outbox first: a concurrent prune can only remove records already archived.
         let pending = self.inner.store.pending(id).await?;
-        let archived = self.inner.archive.read(id).await?;
-        let records = merge_records(archived.into_iter().chain(pending))?;
-        let mut expected = after + 1;
+        let limit = limit.clamp(1, 100);
+        let width = room.version.saturating_sub(after).min(limit as u64) as usize;
+        let archived = self.inner.archive.read_page(id, after, width).await?;
+        let last = after.saturating_add(width as u64);
+        let records = merge_records(
+            archived.into_iter().chain(
+                pending
+                    .into_iter()
+                    .filter(|r| r.sequence > after && r.sequence <= last),
+            ),
+        )?;
+        let mut next_after = after;
         let mut events = vec![];
         for record in records
             .iter()
             .filter(|r| r.sequence > after && r.sequence <= room.version)
-            .take(limit.clamp(1, 100))
+            .take(limit)
         {
-            if record.sequence != expected {
+            if Some(record.sequence) != next_after.checked_add(1) {
                 break;
             }
             events.push(crate::reducer::batch(&room, subject, record)?);
-            expected += 1;
+            next_after = record.sequence;
         }
-        let next_after = expected - 1;
-        let archive_pending = next_after < room.version && events.len() < limit.clamp(1, 100);
+        let archive_pending = next_after < room.version && events.len() < limit;
         Ok(EventPage {
             game_id: id.into(),
             events,

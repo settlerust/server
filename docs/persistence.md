@@ -8,22 +8,66 @@ The local adapter uses SQLite WAL with `synchronous=FULL`. In one `IMMEDIATE` tr
 
 The server publishes neither a success nor new state until commit succeeds. After ambiguous failure it reads state back and compares version plus state hash. A confirmed matching commit returns success; a conflicting durable version replaces stale actor state and returns a conflict. Client retries use the original UUID and expected version.
 
-## Moving archive horizon
+## Bounded outbox and S3 history
 
-DynamoDB stores current state and a **temporary bounded outbox**, never an unbounded completed history. Local mode has the same distinction. At most 256 pending records per game are allowed; a full horizon returns `backpressure` until archive delivery catches up.
+The transactional outbox holds at most 256 pending records per game. A full outbox
+returns `backpressure` until archive delivery succeeds. DynamoDB stores the current
+`STATE`, temporary `EVENT#…` outbox, and ownership manifests. Permanent replay
+history lives in S3; the archive adapter never reads or writes DynamoDB.
 
-The archive worker:
+AWS history uses gzip JSONL batches under
+`history/v1/game_id=UUID/batch-<20-digit first sequence>.jsonl.gz`. Each key covers
+100 fixed sequence positions: 1–100, 101–200, and so on. A partial batch is written
+immediately, so slow games and final records do not wait for a full batch. Updating
+it merges identical records and rejects conflicting duplicates. `If-None-Match`
+creates a new object; `If-Match` fences updates against the ETag read before the
+merge. Concurrent workers reload and merge on a conditional conflict, with a
+bounded retry count. A batch containing all 100 positions needs no further writes.
 
-1. Sends pending records to Firehose (local mode: atomic JSON files with file/directory fsync).
-2. Tracks accepted sends to avoid resending them on every poll in the same process.
-3. Reads back S3 slices and verifies identical complete records.
-4. Deletes only the contiguous confirmed outbox prefix.
+After delivery, the worker reads only the pending sequence window, compares whole
+records, and prunes the confirmed prefix. A failed write, lost acknowledgment,
+read-back failure, or exhausted conflict retry leaves the outbox available.
+Restart or reassignment restores the latest snapshot and resumes this delivery;
+reconstructing old history is unnecessary for recovery or game migration.
 
-A Firehose acceptance is not proof of S3 visibility. The outbox remains until read-back confirmation. Partial batch failures retry safely; a crash after delivery can resend records. Readers deduplicate by `(game_id, sequence)` and reject conflicting records. A server restart forgets the in-memory delivery cache and safely retries pending records. Accepted records still missing from S3 are re-sent after five minutes, allowing recovery even if downstream delivery exhausted its own retries.
+REST history reads the outbox first, then a window of at most 100 archive positions.
+Local mode opens exact sequence filenames. AWS fetches at most two S3 batches for a
+public page; internal 256-position verification fetches at most four. Object sizes,
+decoded sizes, and record counts are bounded. Missing positions stop the public
+page and set `archive_pending`; readers never skip gaps. Snapshot versions bound
+the response, and redacted empty batches still advance its cursor. Authentication
+and participant-specific projection apply before records reach a client.
 
-S3 objects are gzip newline-delimited JSON under `events/game_id=UUID/`. Every line has canonical typed `input` and `public` fields plus `input_json` and `public_json` string columns for convenient Athena JSON functions. These duplicated query columns are only added at the archive boundary. Records include `schema`, `engine_version`, sequence, timestamp, and a SHA-256 hash of the resulting complete room.
+`SETTLERS_FIREHOSE_STREAM` optionally enables the existing raw analytics delivery
+under `events/game_id=UUID/`. Configured analytics sends precede S3 history writes;
+a failed send leaves the outbox available for retry. Firehose acceptance does not
+confirm an S3 history write. A crash may resend analytics events, whose consumers
+must deduplicate `(game_id, sequence)`. Raw analytics JSON includes `input_json`
+and `public_json` columns for Athena; history batches store canonical replay
+records. Both copies contain private data.
 
-Pending records bridge Firehose buffering delay in REST history. Reading the outbox before S3 avoids a prune race. Public history uses the caller projection and never exposes the private `input` field. Batches with no visible events still advance pagination.
+Batch writes occur once per affected sequence range in each delivery, rather than
+once per record. Partially filled ranges incur additional PUTs as new records
+arrive. The versioned bucket expires superseded `history/v1/` object versions after
+one day; it retains current history and leaves raw analytics objects unaffected.
+S3 lifecycle expiration is asynchronous. Online paths never list S3 objects or read
+a whole game's archive. `Archive::read` is reserved for explicit offline export.
+
+Existing base-v9 Firehose exports need a one-time batch import before their archived
+portion is available through online history. Configure AWS credentials and
+`SETTLERS_ARCHIVE_BUCKET`, then run this once per selected game:
+
+```sh
+cargo run -p server --features aws --bin archive-import -- GAME_UUID
+```
+
+The command reads the selected export, verifies every replay hash, and writes
+history batches without resending Firehose events. Retries are safe. Startup and
+request handlers never perform this import. Runtime IAM needs `s3:GetObject` and
+`s3:PutObject` on `history/v1/*`; deploy this additive permission before running the
+new adapter. Existing DynamoDB `ARCHIVE#…` entries are no longer used and are not
+automatically deleted. After verifying their S3 replacement, their explicit
+cleanup can reclaim storage without changing `STATE`, outbox, or ownership items.
 
 ## Shared-process ownership
 
@@ -53,7 +97,7 @@ its own ECS metadata endpoint. It does not make placement decisions.
 
 ## Crash recovery
 
-At startup the server loads current snapshots, resumes archive delivery, marks old sockets disconnected, and resumes persisted deadlines. A saved JWT and signing key preserve the same seat. Lost public broadcasts are recovered by REST pagination plus a fresh private snapshot. There is no need to replay all S3 history merely to restart the server. Archive outages do not block loading durable snapshots. If a full outbox or a failed write prevents committing disconnected presence, the last committed presence remains visible until actor retries succeed; no uncommitted presence is published. One game's archive failure does not prevent delivery for other games.
+At startup the server validates current snapshots, resumes archive delivery, marks old sockets disconnected, and resumes persisted deadlines. A saved JWT and signing key preserve the same seat. Lost public broadcasts are recovered by REST pagination plus a fresh private snapshot. There is no need to replay all S3 history merely to restart the server. Archive outages do not block loading durable snapshots. If a full outbox or a failed write prevents committing disconnected presence, the last committed presence remains visible until actor retries succeed; no uncommitted presence is published. One game's archive failure does not prevent delivery for other games.
 
 Full reconstruction from the initial seed and recorded inputs is a separate verification/research path:
 
@@ -61,7 +105,13 @@ Full reconstruction from the initial seed and recorded inputs is a separate veri
 cat data/archive/game_id=GAME_UUID/*.json | cargo run -q -p server --bin replay
 ```
 
-For S3, download the permitted game's gzip objects, decompress their lines, and feed the same CLI. The CLI sorts, deduplicates, enforces contiguous sequence numbers, applies creation/commands/presence/timeouts, and verifies every resulting hash. Incompatible schema/engine versions fail explicitly. Preserve versioned replay code when changing rule behavior or deterministic randomness.
+For S3, download the permitted game's gzip objects, decompress their lines, and feed the same CLI. The CLI sorts, deduplicates, enforces contiguous sequence numbers, applies creation/commands/presence/timeouts, and verifies every resulting hash. Incompatible schema/engine versions fail explicitly. `ReplayVersion::CURRENT` defaults to `BaseV9`, serialized as `base-v9`. Earlier and
+unknown versions are rejected during decoding. Pre-v9 pending outboxes are not
+migrated automatically; deploy against base-v9 data. Participant wire protocol remains
+version 1. For a future semantic change, add a typed variant and its explicit reducer
+dispatch; capture a new permanent fixture before changing the default. The base-v9
+fixture contains fixed inputs, public events, and per-transition hashes and is never
+regenerated by its test.
 
 ## Athena
 
@@ -88,13 +138,16 @@ CROSS JOIN UNNEST(CAST(json_parse(public_json) AS ARRAY(JSON))) AS t(event)
 ORDER BY sequence;
 ```
 
-`input_json` includes seed and private participant actions. Give research archive/Glue/Athena access only to research roles. Browser/player JWTs grant no AWS access. The server runtime IAM policy permits current-state/outbox operations, Firehose sends, and archive reads; it does not grant Athena execution or S3 deletion.
+`input_json` includes seed and private participant actions. Give research archive/Glue/Athena access only to research roles. Browser/player JWTs grant no AWS access. The server runtime IAM policy permits current-state/outbox operations, optional Firehose sends, and history reads/writes; it does not grant Athena execution or S3 deletion.
 
-Trade responses use archive transition version `base-v6`. Explicit passes persist
-in each offer, and the last rejection closes it in the same transaction. Replay
-continues to use the historical rejection behavior for `base-v1` through `base-v5`;
-the empty response list is omitted from serialization to preserve historical hashes.
 
-Archive transition version `base-v7` locks lobby readiness once the opening order
-is decided. Earlier records retain their original readiness and disconnect
-behavior during replay. No wire schema changes are required.
+## Snapshot validation
+
+`State::validate` checks settings, phase and seat indices, packed occupancy, piece
+counts and limits, resource conservation (19 per type), and the 25-card development
+inventory across deck, held, new, and used cards. Retired pieces remain on the board;
+retirement returns resources and moves held development cards to the used inventory.
+`Room::validate` adds unique identities and seats, matching room/engine settings, and
+opening/offer indices. Validation runs when storage or browser checkpoints are
+restored, when an ambiguous write reloads a snapshot, and after every replay step.
+Rule transitions remain pure and do not scan the whole state on each live command.

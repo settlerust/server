@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public RSA signing fixture used only by managed authentication tests"
+targetRules = ["private-key"]
+paths = ['''^crates/server/tests/fixtures/jwt-test-private\.pem$''']

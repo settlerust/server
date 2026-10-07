@@ -1,3 +1,4 @@
+//! Manage game actors, enforce process capacity, and route requests to their queues.
 mod actor;
 mod archive;
 mod expert;
@@ -12,6 +13,7 @@ use settlers_protocol::*;
 use std::{collections::BTreeMap, sync::Arc};
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 #[derive(Clone)]
+/// Shared handle to independently serialized games and their durable storage.
 pub struct GameService {
     inner: Arc<Inner>,
 }
@@ -65,12 +67,7 @@ impl GameService {
                         "assigned games exceed server capacity",
                     ));
                 }
-                if room.schema != 1 {
-                    return Err(Error::new(
-                        ErrorCode::Internal,
-                        "unsupported persisted room schema",
-                    ));
-                }
+                room.validate()?;
                 for subject in room
                     .members
                     .iter()
@@ -96,6 +93,7 @@ impl GameService {
                         // A full outbox must not prevent read access to the last durable state.
                         // The actor reconciles socket presence once commits are available again.
                         room = service.inner.store.load(&id).await?.ok_or_else(closed)?;
+                        room.validate()?;
                         break;
                     }
                     room = next;
@@ -194,6 +192,7 @@ impl GameService {
             ));
         }
         if let Some(room) = self.inner.store.load(id).await? {
+            room.validate()?;
             let view = crate::reducer::view(&room, &identity.subject)?;
             if !view.host {
                 return Err(Error::new(

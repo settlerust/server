@@ -15,8 +15,6 @@ pub(super) fn offer(
     p: u8,
     offer: TradeOffer,
     events: &mut Vec<PublicEvent>,
-    modern: bool,
-    close_declined: bool,
 ) -> Result<()> {
     if room.offers.iter().any(|o| o.public.id == offer.id) {
         return Err(Error::new(ErrorCode::Conflict, "offer ID already exists"));
@@ -50,24 +48,22 @@ pub(super) fn offer(
         return Err(settlers_engine::RuleError::InsufficientResources.into());
     }
     let turn = game.turn;
-    if modern {
-        for previous in &mut room.offers {
-            if !improves(&offer, &previous.public) {
-                continue;
-            }
-            if previous.turn == Some(turn)
-                && let OfferStatus::Accepted { player } = previous.public.status
-            {
-                let mut error = Error::new(
-                    ErrorCode::TradeTaken,
-                    "the earlier offer was accepted; its replacement was not published",
-                );
-                error.0.winner = Some(player);
-                return Err(error);
-            }
-            if previous.public.status == OfferStatus::Open {
-                close(previous, TradeCloseReason::Replaced, events);
-            }
+    for previous in &mut room.offers {
+        if !improves(&offer, &previous.public) {
+            continue;
+        }
+        if previous.turn == Some(turn)
+            && let OfferStatus::Accepted { player } = previous.public.status
+        {
+            let mut error = Error::new(
+                ErrorCode::TradeTaken,
+                "the earlier offer was accepted; its replacement was not published",
+            );
+            error.0.winner = Some(player);
+            return Err(error);
+        }
+        if previous.public.status == OfferStatus::Open {
+            close(previous, TradeCloseReason::Replaced, events);
         }
     }
     if room
@@ -94,9 +90,9 @@ pub(super) fn offer(
     room.offers.push(Offer {
         public: offer,
         rejected,
-        turn: modern.then_some(turn),
+        turn: Some(turn),
     });
-    if close_declined && let Some(offer) = room.offers.last_mut() {
+    if let Some(offer) = room.offers.last_mut() {
         close_if_declined(offer, events);
     }
     while room.offers.len() > 64 {
@@ -211,7 +207,6 @@ pub(super) fn reject(
     p: u8,
     id: &str,
     events: &mut Vec<PublicEvent>,
-    close_declined: bool,
 ) -> Result<()> {
     let offer = room
         .offers
@@ -227,12 +222,10 @@ pub(super) fn reject(
         offer_id: id.into(),
         player: p,
     });
-    if close_declined {
-        if !offer.public.declined.contains(&p) {
-            offer.public.declined.push(p);
-        }
-        close_if_declined(offer, events);
+    if !offer.public.declined.contains(&p) {
+        offer.public.declined.push(p);
     }
+    close_if_declined(offer, events);
     Ok(())
 }
 pub(super) fn cancel(

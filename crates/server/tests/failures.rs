@@ -90,6 +90,13 @@ impl Archive for DelayedArchive {
     async fn deliver(&self, records: &[Record]) -> Result<()> {
         self.inner.deliver(records).await
     }
+    async fn read_page(&self, id: &str, after: u64, limit: usize) -> Result<Vec<Record>> {
+        if self.visible.load(Ordering::SeqCst) {
+            self.inner.read_page(id, after, limit).await
+        } else {
+            Ok(vec![])
+        }
+    }
     async fn read(&self, id: &str) -> Result<Vec<Record>> {
         if self.visible.load(Ordering::SeqCst) {
             self.inner.read(id).await
@@ -99,7 +106,7 @@ impl Archive for DelayedArchive {
     }
 }
 #[tokio::test]
-async fn delivery_ack_without_s3_visibility_keeps_outbox_and_history() {
+async fn delivery_ack_without_archive_visibility_keeps_outbox_and_history() {
     let h = Harness::new().await;
     let archive = Arc::new(DelayedArchive {
         inner: h.archive.clone(),
@@ -131,6 +138,9 @@ impl Archive for FailingGameArchive {
             return Err(Error::new(ErrorCode::StorageUnavailable, "archive offline"));
         }
         self.inner.deliver(records).await
+    }
+    async fn read_page(&self, id: &str, after: u64, limit: usize) -> Result<Vec<Record>> {
+        self.inner.read_page(id, after, limit).await
     }
     async fn read(&self, id: &str) -> Result<Vec<Record>> {
         self.inner.read(id).await
