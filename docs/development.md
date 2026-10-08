@@ -293,10 +293,18 @@ Open incoming offers also schedule decisions outside the computer's turn, before
 the active computer continues. Offers with no affordable acceptance or counter
 receive an explicit decline. A decision to wait applies only to that snapshot
 and does not block other recipients; any state change lets the seat reconsider.
+An open outgoing offer pauses the computer's normal moves, including spending
+cards and ending its turn, until acceptance, all recipients declining, or expiry.
+The existing offer deadline defaults to 30 seconds and is capped by the turn
+deadline. Thinking and partial declines keep the wait active. Incoming
+counteroffers remain eligible for consideration during the wait. The pause is
+derived from persisted open offers, so it also survives a server restart.
 `tests/computers.rs` covers all four policies, startup without connections,
 admission fences, rejected external control, durable decisions, and restart.
 `tests/computer_trades.rs` covers hosted acceptance, public rejection, and waiting
 without starving other seats.
+`tests/service/computer_wait.rs` covers the outgoing response window, partial
+declines, expiry, and counteroffers without premature turn completion.
 
 Hosts may choose any of these strengths through `resolve_disconnect` after the
 existing two-minute recovery window. The automatic outcome remains Expert after
