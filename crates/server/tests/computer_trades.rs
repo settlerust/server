@@ -286,3 +286,120 @@ async fn computer_recipients_answer_before_the_offering_computer_continues_its_t
         if matches!(&request.command, Command::AcceptTrade { offer_id } if offer_id == &id))
     );
 }
+
+#[tokio::test]
+async fn an_outgoing_offer_survives_restart_and_waits_for_a_human_response() {
+    let h = Harness::trading().await;
+    let before = h.room().await;
+    let mut room = before.clone();
+    room.settings.turn_seconds = 0;
+    room.deadline_ms = None;
+    let game = room.game.as_mut().unwrap();
+    game.settings.turn_seconds = 0;
+    game.players[0].resources = Resources([0, 0, 0, 0, 1]);
+    game.bank = Resources([13, 13, 13, 13, 12]);
+    for member in &mut room.members {
+        member.connected = false;
+        member.disconnected_at_ms = None;
+        if member.seat == Some(0) {
+            member.computer_policy = Some(ComputerPolicy::Easy);
+        }
+    }
+    let (room, record) = reducer::reduce(
+        &room,
+        Input::ComputerCommand {
+            seat: 0,
+            request: request(
+                room.version,
+                Command::OfferTrade {
+                    to: vec![1],
+                    give: Resources([0, 0, 0, 0, 1]),
+                    receive: Resources([1, 0, 0, 0, 0]),
+                    expires_in_ms: None,
+                    message: None,
+                },
+            ),
+        },
+        now_ms(),
+    )
+    .unwrap();
+    h.store
+        .commit(before.version, &room, &record)
+        .await
+        .unwrap();
+    let offer_id = room.offers.last().unwrap().public.id.clone();
+    let expected_game = room.game.unwrap();
+    let service = GameService::restore(h.store.clone(), h.archive.clone(), now_ms())
+        .await
+        .unwrap();
+    for seat in 1..4 {
+        service
+            .presence(
+                &h.id,
+                identity(seat).subject,
+                format!("human-{seat}"),
+                true,
+                now_ms(),
+            )
+            .await
+            .unwrap();
+    }
+    let h = Harness { service, ..h };
+    h.service
+        .execute(
+            &h.id,
+            identity(1),
+            request(
+                h.room().await.version,
+                Command::ThinkTrade {
+                    offer_id: offer_id.clone(),
+                },
+            ),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    for _ in 0..10 {
+        h.service.tick(now_ms()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let room = h.room().await;
+        assert_eq!(
+            room.game.unwrap(),
+            expected_game,
+            "waiting must preserve the turn and offered cards"
+        );
+        assert_eq!(room.offers.last().unwrap().public.status, OfferStatus::Open);
+    }
+    h.service
+        .execute(
+            &h.id,
+            identity(1),
+            request(h.room().await.version, Command::AcceptTrade { offer_id }),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let accepted = h.room().await;
+    assert_eq!(
+        accepted.offers.last().unwrap().public.status,
+        OfferStatus::Accepted { player: 1 }
+    );
+    assert_eq!(
+        accepted.game.unwrap().players[0].resources,
+        Resources([1, 0, 0, 0, 0])
+    );
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            h.service.tick(now_ms()).await.unwrap();
+            if h.store.pending(&h.id).await.unwrap().iter().any(|record| {
+                record.sequence > accepted.version
+                    && matches!(record.input, Input::ComputerCommand { seat: 0, .. })
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("acceptance should let the computer continue immediately");
+}

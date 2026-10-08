@@ -13,6 +13,20 @@ use std::{
     time::Instant,
 };
 pub(super) type Decision = Result<(u8, u64, Option<Command>)>;
+#[cfg(test)]
+#[path = "../../tests/service/computer_wait.rs"]
+mod tests;
+
+fn awaiting_trade_response(view: &GameView, seat: u8) -> bool {
+    view.game
+        .as_ref()
+        .is_some_and(|game| game.phase == Phase::Main)
+        && view
+            .offers
+            .iter()
+            .any(|offer| offer.from == seat && offer.status == OfferStatus::Open)
+}
+
 fn leaf() -> Result<Leaf> {
     static MODEL: OnceLock<std::result::Result<Arc<settlers_expectimax::ntuple::Model>, String>> =
         OnceLock::new();
@@ -68,6 +82,7 @@ pub(super) fn next_view(
             return Some((seat, policy, view));
         }
         if active.is_none()
+            && !awaiting_trade_response(&view, seat)
             && view
                 .game
                 .as_ref()
@@ -76,7 +91,8 @@ pub(super) fn next_view(
             active = Some((seat, policy, view));
         }
     }
-    // Let recipients answer before the current computer continues or ends its turn.
+    // Human responses arrive asynchronously. An open outgoing offer holds normal
+    // moves until acceptance, all declines, or the persisted offer deadline.
     active
 }
 pub(super) fn choose(
@@ -125,6 +141,14 @@ pub(super) fn choose(
             )
         })?
         .command;
+    // Incoming counteroffers still get evaluated while our offer is open, but a
+    // preference for building/spending/end-turn must wait for its response window.
+    let command =
+        if awaiting_trade_response(&view, seat) && matches!(command, Some(Command::Act { .. })) {
+            None
+        } else {
+            command
+        };
     // Waiting can outrank accepting a trade. Do not skip it for a lower-ranked command.
     Ok((seat, view.version, command))
 }
