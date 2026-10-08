@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Instant,
 };
-pub(super) type Decision = Result<(u8, CommandRequest)>;
+pub(super) type Decision = Result<(u8, u64, Option<Command>)>;
 fn leaf() -> Result<Leaf> {
     static MODEL: OnceLock<std::result::Result<Arc<settlers_expectimax::ntuple::Model>, String>> =
         OnceLock::new();
@@ -34,11 +34,15 @@ fn leaf() -> Result<Leaf> {
         .map_err(Error::storage)?;
     Ok(Leaf::tables(Arc::clone(model), 1000.0, 0.0))
 }
-pub(super) fn next_view(room: &Room) -> Option<(u8, ComputerPolicy, GameView)> {
+pub(super) fn next_view(
+    room: &Room,
+    considered: &std::collections::HashMap<u8, u64>,
+) -> Option<(u8, ComputerPolicy, GameView)> {
     let game = room.game.as_ref()?;
     if matches!(game.phase, Phase::Finished { .. }) {
         return None;
     }
+    let mut active = None;
     for member in &room.members {
         let Some(seat) = member.seat else {
             continue;
@@ -46,20 +50,34 @@ pub(super) fn next_view(room: &Room) -> Option<(u8, ComputerPolicy, GameView)> {
         let Some(policy) = member.policy() else {
             continue;
         };
+        if considered.get(&seat) == Some(&room.version) {
+            continue;
+        }
         let mut own = room.clone();
         let own_member = own.members.iter_mut().find(|m| m.seat == Some(seat))?;
         own_member.resolution = None;
         own_member.computer_policy = None;
         let view = reducer::view(&own, &member.identity.subject).ok()?;
-        if view
-            .game
-            .as_ref()
-            .is_some_and(|g| !g.legal_actions.is_empty())
-        {
+        // Trade responses are protocol commands, not engine legal actions. A recipient
+        // must get a decision while the offerer's turn is still in progress.
+        let incoming = view
+            .offers
+            .iter()
+            .any(|offer| offer.status == OfferStatus::Open && offer.to.contains(&seat));
+        if incoming {
             return Some((seat, policy, view));
         }
+        if active.is_none()
+            && view
+                .game
+                .as_ref()
+                .is_some_and(|g| !g.legal_actions.is_empty())
+        {
+            active = Some((seat, policy, view));
+        }
     }
-    None
+    // Let recipients answer before the current computer continues or ends its turn.
+    active
 }
 pub(super) fn choose(
     seat: u8,
@@ -99,19 +117,8 @@ pub(super) fn choose(
     let command = report
         .candidates
         .into_iter()
-        .find_map(|candidate| candidate.command)
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCode::Internal,
-                "Built-in computer did not return a decision",
-            )
-        })?;
-    Ok((
-        seat,
-        CommandRequest {
-            request_id: uuid::Uuid::new_v4().to_string(),
-            expected_version: view.version,
-            command,
-        },
-    ))
+        .next()
+        .and_then(|candidate| candidate.command);
+    // Waiting can outrank accepting a trade. Do not skip it for a lower-ranked command.
+    Ok((seat, view.version, command))
 }

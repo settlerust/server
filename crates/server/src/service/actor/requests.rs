@@ -207,7 +207,8 @@ impl Actor {
                 }
                 if result.is_ok()
                     && self.computer.is_none()
-                    && let Some((seat, policy, view)) = super::super::expert::next_view(&self.room)
+                    && let Some((seat, policy, view)) =
+                        super::super::expert::next_view(&self.room, &self.considered)
                 {
                     let offered_turn = self.offered.get(&seat).copied();
                     self.computer = Some(tokio::task::spawn_blocking(move || {

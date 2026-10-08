@@ -150,6 +150,15 @@ pub fn analyze_with(
     let counters = config.bargain && config.counters;
     let asks = config.bargain && config.asks;
     let mut decisions = bargain::responses(view, &knowledge, history);
+    // Even when the seat cannot afford acceptance or any counter, it must be
+    // able to compare an incoming offer with waiting and explicitly decline it.
+    let incoming = o.phase == Phase::Main
+        && view.offers.iter().any(|offer| {
+            offer.status == OfferStatus::Open
+                && offer.to.contains(&seat)
+                && offer.from == o.current
+                && !offer.declined.contains(&seat)
+        });
     decisions.retain(|d| match &d.kind {
         bargain::Kind::Counter { .. } => counters,
         // A stubborn seat never accepts terms that ask it for more cards than it receives.
@@ -270,8 +279,14 @@ pub fn analyze_with(
             ));
         }
         // The value of answering nothing: the opponents' round from here (off turn only).
-        let wait_value = if !search.aborted && !my_turn && !decisions.is_empty() {
-            Some(search.round(&worlds, 0)?)
+        let wait_value = if !search.aborted && !my_turn && incoming {
+            // No affordable acceptance or counter means there is no comparison to
+            // search. A forced decline must not exhaust the budget simulating a round.
+            Some(if decisions.is_empty() {
+                search.leaf(&worlds)
+            } else {
+                search.round(&worlds, 0)?
+            })
         } else {
             None
         };

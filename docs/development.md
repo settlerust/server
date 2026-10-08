@@ -289,8 +289,14 @@ Each decision runs on a blocking worker with
 an ordinary redacted seat view, decision-local caching, and version-fenced commit
 through `ComputerCommand`. Durable records contain the chosen command; replay
 never reruns search. The bundled Expert model requires no external download.
+Open incoming offers also schedule decisions outside the computer's turn, before
+the active computer continues. Offers with no affordable acceptance or counter
+receive an explicit decline. A decision to wait applies only to that snapshot
+and does not block other recipients; any state change lets the seat reconsider.
 `tests/computers.rs` covers all four policies, startup without connections,
 admission fences, rejected external control, durable decisions, and restart.
+`tests/computer_trades.rs` covers hosted acceptance, public rejection, and waiting
+without starving other seats.
 
 Hosts may choose any of these strengths through `resolve_disconnect` after the
 existing two-minute recovery window. The automatic outcome remains Expert after
