@@ -118,7 +118,13 @@ pub(super) fn choose(
         .candidates
         .into_iter()
         .next()
-        .and_then(|candidate| candidate.command);
+        .ok_or_else(|| {
+            Error::new(
+                ErrorCode::Internal,
+                "Built-in computer did not return a decision",
+            )
+        })?
+        .command;
     // Waiting can outrank accepting a trade. Do not skip it for a lower-ranked command.
     Ok((seat, view.version, command))
 }
