@@ -10,13 +10,24 @@ impl Actor {
     }
     pub(super) async fn finish_computer(&mut self, result: WorkerResult) {
         self.computer = None;
-        let Ok(Ok((seat, request))) = result else {
+        let Ok(Ok((seat, version, command))) = result else {
             return;
         };
         // Intervening commands invalidate decisions made from an earlier snapshot.
-        if request.expected_version != self.room.version {
+        if version != self.room.version {
             return;
         }
+        let Some(command) = command else {
+            // A waiting seat must not monopolize the worker while other recipients
+            // still need to answer. Any new snapshot makes this seat eligible again.
+            self.considered.insert(seat, version);
+            return;
+        };
+        let request = CommandRequest {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            expected_version: version,
+            command,
+        };
         let offered = matches!(request.command, Command::OfferTrade { .. });
         let input = Input::ComputerCommand { seat, request };
         if commit(

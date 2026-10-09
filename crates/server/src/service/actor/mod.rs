@@ -64,6 +64,7 @@ struct Actor {
     sessions: HashMap<String, HashMap<String, bool>>,
     computer: Option<tokio::task::JoinHandle<super::expert::Decision>>,
     offered: HashMap<u8, u32>,
+    considered: HashMap<u8, u64>,
 }
 pub(super) async fn run(
     room: Room,
@@ -78,6 +79,7 @@ pub(super) async fn run(
         sessions: HashMap::new(),
         computer: None,
         offered: HashMap::new(),
+        considered: HashMap::new(),
     };
     loop {
         let request = tokio::select! {
